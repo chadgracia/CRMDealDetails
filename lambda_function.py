@@ -112,7 +112,7 @@ def format_price_with_comparison(price, valuation, comparison_pct):
     if comparison_pct is None:
         return f"{format_currency(price, include_cents=True)}{format_valuation(valuation)}"
         
-    color = '#4CAF50' if comparison_pct >= 0 else '#FF5252'  # Green or Red
+    color = '#1f7a4d' if comparison_pct >= 0 else '#b23b3b'  # Gracia pos / neg
     arrow = '↑' if comparison_pct >= 0 else '↓'
     return f'{format_currency(price, include_cents=True)}{format_valuation(valuation)} <span style="color: {color}">({comparison_pct:+.0f}% {arrow})</span>'
 
@@ -481,21 +481,13 @@ def lambda_handler(event, context):
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>{deal_name}</title>
+        <link rel="stylesheet" href="https://s3.us-east-1.amazonaws.com/main.css/master.css">
         <style>
-            body {{
-                font-family: Arial, sans-serif;
-                line-height: 1.6;
-                color: #333;
-                max-width: 1000px;
-                margin: 0 auto;
-                padding: 20px;
-            }}
+            /* Page-specific layout only. The shared Gracia look (font stack,
+               page container, header, buttons, tables, news list, disclaimer)
+               comes from master.css. */
             .header {{
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
                 flex-wrap: wrap;
-                margin-bottom: 20px;
             }}
             .header-content {{
                 flex: 1;
@@ -512,55 +504,16 @@ def lambda_handler(event, context):
                 max-height: 80px;
                 object-fit: contain;
             }}
-            h1 {{
-                color: #2c3e50;
-                margin: 0;
-            }}
-            h2 {{
-                color: #2c3e50;
-                margin-top: 30px;
-                margin-bottom: 20px;
-            }}
-            table {{
-                border-collapse: collapse;
-                width: 100%;
-                margin-bottom: 20px;
-            }}
-            th, td {{
-                padding: 12px;
-                text-align: left;
-                border-bottom: 1px solid #e0e0e0;
-            }}
             th {{
-                background-color: #f8f8f8;
-                font-weight: bold;
-                color: #2c3e50;
                 width: 20%;
             }}
             td {{
                 width: 30%;
-                white-space: normal;
-                word-wrap: break-word;
             }}
             .separator {{
                 width: 1px;
-                background-color: #333;
+                background-color: var(--border-strong);
                 padding: 0;
-            }}
-            tr:hover {{
-                background-color: #f5f5f5;
-            }}
-            .btn {{
-                display: inline-block;
-                background-color: #3498db;
-                color: white;
-                padding: 10px 20px;
-                text-decoration: none;
-                border-radius: 5px;
-                transition: background-color 0.3s, box-shadow 0.3s;
-                margin-bottom: 10px;
-                border: none;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             }}
             .price-comparison {{
                 display: inline-block;
@@ -569,77 +522,30 @@ def lambda_handler(event, context):
             .price-comparison span {{
                 font-size: 65%;
             }}
-            .btn:hover {{
-                background-color: #2980b9;
-                box-shadow: 0 4px 8px rgba(0,0,0,0.2);
-            }}
-            .deal-id {{
-                font-size: 0.9em;
-                color: #7f8c8d;
-                margin-top: 1px;
-                margin-bottom: 15px;
-            }}
-            .button-group {{
-                display: flex;
-                gap: 10px;
-            }}
-            .greyed-out {{
-                opacity: 0.5;
-                pointer-events: none;
-            }}
-            .news-section {{
-                margin-top: 30px;
-                margin-bottom: 30px;
-            }}
-            .news-section h2 {{
-                color: #2c3e50;
-                margin-bottom: 15px;
-            }}
             .company-summary {{
                 font-size: 1.2em;
                 font-style: italic;
-                color: #34495e;
+                color: var(--text-secondary);
                 margin: 15px 0 20px 0;
                 line-height: 1.6;
             }}
             .catalyst {{
-                background-color: #f0f7f0;
-                border-left: 4px solid #4CAF50;
+                background-color: #faf8f3;
+                border-left: 4px solid var(--accent);
                 padding: 10px 16px;
                 margin: 0 0 20px 0;
                 font-size: 1.05em;
-                color: #2c3e50;
+                color: var(--text);
             }}
             .catalyst-label {{
                 display: block;
                 font-size: 0.72em;
                 text-transform: uppercase;
                 letter-spacing: 0.05em;
-                color: #4CAF50;
+                color: var(--accent);
                 font-weight: bold;
                 margin-bottom: 3px;
             }}
-            .news-section ul {{
-                list-style-type: disc;
-                padding-left: 25px;
-            }}
-            .news-section li {{
-                margin-bottom: 12px;
-                padding-bottom: 10px;
-                border-bottom: 1px dotted #e0e0e0;
-            }}
-            .news-section li:last-child {{
-                border-bottom: none;
-            }}
-            .news-section a {{
-                color: #3498db;
-                text-decoration: none;
-                font-weight: 500;
-            }}
-            .news-section a:hover {{
-                text-decoration: underline;
-            }}
-
         </style>
     </head>
     <body>
