@@ -7,6 +7,13 @@ from datetime import datetime, timedelta  # NEW: Import for date handling
 
 API_KEY = "defe67185ffd4993874558be8c4eb29b"  # Your actual NewsAPI key
 
+# Companies whose news search returns mostly junk -- the News section is skipped
+# for these. To turn news off for a company, add its name here (case-insensitive,
+# matched against the company name exactly). To turn it back on, remove the line.
+NEWS_SKIP_COMPANIES = {
+    "1x",
+}
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -339,8 +346,14 @@ def lambda_handler(event, context):
 
     # Fetch news data for the company - using exact phrase matching with business context
     business_context = "funding OR pre-IPO OR finance OR investment OR technology OR startup OR venture OR company OR business"
-    news_data = test_news_api(f'"{company_name}" AND ({business_context})')
     news_html = ""
+
+    # Skip the News section for companies whose search returns mostly junk (see NEWS_SKIP_COMPANIES)
+    news_data = None
+    if company_name.strip().lower() in NEWS_SKIP_COMPANIES:
+        logger.info(f"News disabled for company: {company_name}")
+    else:
+        news_data = test_news_api(f'"{company_name}" AND ({business_context})')
 
     # Process news data if available
     if news_data and news_data.get('articles'):
