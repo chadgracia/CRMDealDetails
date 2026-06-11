@@ -15,14 +15,15 @@ NEWS_SKIP_COMPANIES = {
 }
 
 QUESTION_CATALOG_BUYER = [   # shown on SELL orders (a buyer asking about the seller)
-    {"id": "direct_trade", "q": "Are you able to do a direct trade?",          "field": None},
-    {"id": "deadline",     "q": "When is the deadline?",                        "field": None},
-    {"id": "class",        "q": "Common or preferred?",                         "field": "Class"},
-    {"id": "min_max",      "q": "What is the minimum / maximum size?",          "field": "min_max"},
-    {"id": "shares_avail", "q": "How many shares are available to buy?",        "field": "Shares"},
-    {"id": "nda_l1",       "q": "Full transparency on the L1 manager under NDA?","field": None},
-    {"id": "accept_bid",   "q": "Would you accept this bid?",                   "field": None},
-    {"id": "upfront_fee",  "q": "Upfront fee instead of mgmt/carry?",           "field": None},
+    {"id": "accept_bid",   "q": "Would you accept a bid of ___?",                                   "field": None},
+    {"id": "deadline",     "q": "When is the deadline to commit?",                                  "field": None},
+    {"id": "class",        "q": "Are these shares common or preferred?",                            "field": "Class"},
+    {"id": "min_max",      "q": "What is the minimum / maximum size?",                              "field": "min_max"},
+    {"id": "shares_avail", "q": "How many shares are available to buy?",                            "field": "Shares"},
+    {"id": "seller_fee",   "q": "What is the seller's one-time fee?",                               "field": "Seller Fee"},
+    {"id": "upfront_fee",  "q": "Would you accept an upfront fee instead of management fee and carry?", "field": None},
+    {"id": "nda_l1",       "q": "Can you provide full transparency on the L1 manager under an NDA?", "field": None},
+    {"id": "direct_trade", "q": "Are you able to do a direct trade?",                               "field": None},
 ]
 QUESTION_CATALOG_SELLER = [  # shown on BUY orders (a seller asking about the buyer)
     {"id": "cash_on_hand", "q": "Do you have cash on hand?",                    "field": None},
@@ -331,54 +332,41 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name):
                if not (is_spv and it["id"] == "direct_trade")
                and not (is_direct and it["id"] == "nda_l1")]
 
-    rows_html = ""
+    rows_ask = ""
+    rows_answered = ""   # reserved for step 2: seller answers captured via the relay (Notes),
+                         # shown here at the bottom only when the data is NOT already on the left.
     for item in catalog:
+        qid = item["id"]
         question_text = item["q"]
-        field = item["field"]
-        answer = None
 
-        if field == "Class":
-            class_val = mapped_fields.get('Class')
-            if class_val:
-                answer = map_option_value('Class', mapped_fields.get('Class'))
-        elif field == "min_max":
-            if mapped_fields.get('Min Deal Size') or mapped_fields.get('Max Deal Size'):
-                answer = ("Min " + format_currency(mapped_fields.get('Min Deal Size', ''))
-                          + " / Max " + format_currency(mapped_fields.get('Max Deal Size', '')))
-        elif field == "Shares":
-            sh = mapped_fields.get('Shares')
-            if sh:
-                try:
-                    answer = "{:,.0f}".format(float(sh))
-                except (ValueError, TypeError):
-                    answer = str(sh)
-        # field is None -> never auto-answered, always render the Ask control.
+        # If the answer is already visible in the left-hand tables, omit the question.
+        if qid == "class" and mapped_fields.get('Class'):
+            continue
+        if qid == "min_max" and mapped_fields.get('Min Deal Size') and mapped_fields.get('Max Deal Size'):
+            continue
+        if qid == "shares_avail" and mapped_fields.get('Shares'):
+            continue
+        if qid == "seller_fee" and mapped_fields.get('Seller Fee'):
+            continue
 
-        if answer:
-            rows_html += (
-                f'<div class="qa-row">'
-                f'<div class="qa-q">{question_text}</div>'
-                f'<div class="qa-a">{answer}</div>'
-                f'</div>'
-            )
-        else:
-            subject = urllib.parse.quote(f"Question on: {deal_name} - {deal_id}")
-            body = urllib.parse.quote(
-                f"Hello Chad,\n\nRegarding {deal_name} (ID: {deal_id}), please ask the "
-                f"counterparty:\n\n{question_text}\n\nThank you."
-            )
-            mailto = f"mailto:cgracia@rainmakersecurities.com?subject={subject}&body={body}"
-            rows_html += (
-                f'<div class="qa-row">'
-                f'<div class="qa-q">{question_text}</div>'
-                f'<a href="{mailto}" class="qa-ask">Ask</a>'
-                f'</div>'
-            )
+        subject = urllib.parse.quote(f"Question on: {deal_name} - {deal_id}")
+        body = urllib.parse.quote(
+            f"Hello Chad,\n\nRegarding {deal_name} (ID: {deal_id}), please ask the "
+            f"counterparty:\n\n{question_text}\n\nThank you."
+        )
+        mailto = f"mailto:cgracia@rainmakersecurities.com?subject={subject}&body={body}"
+        rows_ask += (
+            f'<div class="qa-row">'
+            f'<div class="qa-q">{question_text}</div>'
+            f'<a href="{mailto}" class="qa-ask">Ask</a>'
+            f'</div>'
+        )
 
     return (
         '<aside class="qa-box">'
         '<h2>Questions about this deal</h2>'
-        + rows_html
+        + rows_ask
+        + rows_answered
         + '</aside>'
     )
 
