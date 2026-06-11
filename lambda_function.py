@@ -19,6 +19,7 @@ QUESTION_CATALOG_BUYER = [   # shown on SELL orders (a buyer asking about the se
     {"id": "deadline",     "q": "When is the deadline?",                        "field": None},
     {"id": "class",        "q": "Common or preferred?",                         "field": "Class"},
     {"id": "min_max",      "q": "What is the minimum / maximum size?",          "field": "min_max"},
+    {"id": "shares_avail", "q": "How many shares are available to buy?",        "field": "Shares"},
     {"id": "nda_l1",       "q": "Full transparency on the L1 manager under NDA?","field": None},
     {"id": "accept_bid",   "q": "Would you accept this bid?",                   "field": None},
     {"id": "upfront_fee",  "q": "Upfront fee instead of mgmt/carry?",           "field": None},
@@ -322,6 +323,14 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name):
     else:
         catalog = QUESTION_CATALOG_BUYER
 
+    structure = map_option_value('Structure', mapped_fields.get('Structure', []))
+    structure = structure if isinstance(structure, str) else ', '.join(structure)
+    is_spv = 'Fund' in structure
+    is_direct = 'Direct' in structure
+    catalog = [it for it in catalog
+               if not (is_spv and it["id"] == "direct_trade")
+               and not (is_direct and it["id"] == "nda_l1")]
+
     rows_html = ""
     for item in catalog:
         question_text = item["q"]
@@ -336,6 +345,13 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name):
             if mapped_fields.get('Min Deal Size') or mapped_fields.get('Max Deal Size'):
                 answer = ("Min " + format_currency(mapped_fields.get('Min Deal Size', ''))
                           + " / Max " + format_currency(mapped_fields.get('Max Deal Size', '')))
+        elif field == "Shares":
+            sh = mapped_fields.get('Shares')
+            if sh:
+                try:
+                    answer = "{:,.0f}".format(float(sh))
+                except (ValueError, TypeError):
+                    answer = str(sh)
         # field is None -> never auto-answered, always render the Ask control.
 
         if answer:
@@ -355,35 +371,14 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name):
             rows_html += (
                 f'<div class="qa-row">'
                 f'<div class="qa-q">{question_text}</div>'
-                f'<a href="{mailto}" class="btn">Ask</a>'
+                f'<a href="{mailto}" class="qa-ask">Ask</a>'
                 f'</div>'
             )
-
-    # Plain (non-f) string so the JS braces stay literal and need no escaping.
-    script = (
-        "<script>"
-        "(function() {"
-        "  var input = document.getElementById('qaSearch');"
-        "  if (!input) return;"
-        "  input.addEventListener('input', function() {"
-        "    var term = input.value.toLowerCase();"
-        "    var rows = document.querySelectorAll('.qa-box .qa-row');"
-        "    rows.forEach(function(row) {"
-        "      var q = row.querySelector('.qa-q');"
-        "      var text = q ? q.textContent.toLowerCase() : '';"
-        "      row.style.display = text.indexOf(term) === -1 ? 'none' : '';"
-        "    });"
-        "  });"
-        "})();"
-        "</script>"
-    )
 
     return (
         '<aside class="qa-box">'
         '<h2>Questions about this deal</h2>'
-        '<input type="text" id="qaSearch" placeholder="Filter questions...">'
         + rows_html
-        + script
         + '</aside>'
     )
 
@@ -662,11 +657,17 @@ def lambda_handler(event, context):
             }}
             .deal-body {{ display:flex; gap:24px; align-items:flex-start; flex-wrap:wrap; }}
             .deal-main {{ flex:1; min-width:320px; }}
-            .qa-box {{ width:340px; border:1px solid var(--border-strong); border-radius:8px;
-                       padding:16px; background:#faf8f3; }}
-            .qa-box h2 {{ margin-top:0; }}
-            .qa-row {{ padding:8px 0; border-bottom:1px solid var(--border-strong); }}
-            #qaSearch {{ width:100%; padding:8px; margin-bottom:12px; box-sizing:border-box; }}
+            .qa-box {{ width:300px; border:1px solid var(--border-strong); border-radius:8px;
+                       padding:14px 16px; background:#faf8f3; font-size:13px; }}
+            .qa-box h2 {{ margin:0 0 10px 0; font-size:15px; }}
+            .qa-row {{ padding:7px 0; border-bottom:1px solid var(--border-strong); }}
+            .qa-row:last-child {{ border-bottom:none; }}
+            .qa-q {{ color:var(--text); margin-bottom:5px; }}
+            .qa-a {{ color:var(--text-secondary); }}
+            .qa-ask {{ display:inline-block; padding:3px 12px; font-size:12px;
+                       border:1px solid var(--border-strong); border-radius:4px;
+                       color:var(--text-secondary); background:#fff; text-decoration:none; }}
+            .qa-ask:hover {{ background:#f0ece3; }}
             @media (max-width:860px) {{ .qa-box {{ width:100%; }} }}
         </style>
     </head>
@@ -693,13 +694,13 @@ def lambda_handler(event, context):
         <div class="deal-body">
             <div class="deal-main">
 {generate_table_html(table_data)}
-            </div>
-            {qa_box_html}
-        </div>
 
         <div id="spvSection" style="display: {'' if map_option_value('Structure', mapped_fields.get('Structure', [])) == 'Fund' else 'none'}">
         <h2>SPV Details</h2>
         {generate_table_html(spv_data)}
+        </div>
+            </div>
+            {qa_box_html}
         </div>
         <!-- News Section -->
         <div id="newsSection" class="news-section">
