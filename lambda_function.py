@@ -332,9 +332,9 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name):
                if not (is_spv and it["id"] == "direct_trade")
                and not (is_direct and it["id"] == "nda_l1")]
 
-    rows_ask = ""
-    rows_answered = ""   # reserved for step 2: seller answers captured via the relay (Notes),
-                         # shown here at the bottom only when the data is NOT already on the left.
+    FORM_URL = "https://s5qv2qkmjt2qejliwchvqukseq0wgwff.lambda-url.us-east-1.on.aws/"
+
+    rows = ""
     for item in catalog:
         qid = item["id"]
         question_text = item["q"]
@@ -349,24 +349,33 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name):
         if qid == "seller_fee" and mapped_fields.get('Seller Fee'):
             continue
 
-        subject = urllib.parse.quote(f"Question on: {deal_name} - {deal_id}")
-        body = urllib.parse.quote(
-            f"Hello Chad,\n\nRegarding {deal_name} (ID: {deal_id}), please ask the "
-            f"counterparty:\n\n{question_text}\n\nThank you."
+        rows += (
+            f'<label class="qa-row">'
+            f'<input type="checkbox" name="q_{qid}" value="1">'
+            f'<span class="qa-q">{question_text}</span>'
+            f'</label>'
         )
-        mailto = f"mailto:cgracia@rainmakersecurities.com?subject={subject}&body={body}"
-        rows_ask += (
-            f'<div class="qa-row">'
-            f'<div class="qa-q">{question_text}</div>'
-            f'<a href="{mailto}" class="qa-ask">Ask</a>'
-            f'</div>'
-        )
+        if qid == "accept_bid":
+            rows += (
+                '<div class="qa-bid">'
+                '<input type="number" name="bid_amount" step="any" placeholder="Bid $/share">'
+                '<input type="number" name="bid_size" step="any" placeholder="Size $ (opt)">'
+                '</div>'
+            )
+
+    if not rows:
+        return ''
 
     return (
         '<aside class="qa-box">'
         '<h2>Questions about this deal</h2>'
-        + rows_ask
-        + rows_answered
+        f'<form method="POST" action="{FORM_URL}">'
+        '<input type="hidden" name="qa" value="submit">'
+        f'<input type="hidden" name="deal_id" value="{deal_id}">'
+        + rows
+        + '<input type="email" name="buyer_email" placeholder="Your email (for the answers)" required class="qa-email">'
+        + '<button type="submit" class="qa-send">Send to counterparty</button>'
+        + '</form>'
         + '</aside>'
     )
 
@@ -648,7 +657,13 @@ def lambda_handler(event, context):
             .qa-box {{ width:300px; border:1px solid var(--border-strong); border-radius:8px;
                        padding:14px 16px; background:#faf8f3; font-size:13px; }}
             .qa-box h2 {{ margin:0 0 10px 0; font-size:15px; }}
-            .qa-row {{ padding:7px 0; border-bottom:1px solid var(--border-strong); }}
+            .qa-row {{ display:flex; align-items:flex-start; gap:8px; padding:7px 0; border-bottom:1px solid var(--border-strong); cursor:pointer; }}
+            .qa-row input[type=checkbox] {{ margin-top:3px; flex:none; }}
+            .qa-bid {{ margin:2px 0 6px 26px; display:flex; gap:6px; }}
+            .qa-bid input {{ width:50%; padding:5px; font-size:12px; box-sizing:border-box; }}
+            .qa-email {{ width:100%; padding:7px; margin:12px 0 8px; box-sizing:border-box; font-size:13px; }}
+            .qa-send {{ width:100%; padding:9px; font-size:13px; font-weight:600; cursor:pointer; border:none; border-radius:6px; background:var(--accent); color:#fff; }}
+            .qa-send:hover {{ opacity:0.9; }}
             .qa-row:last-child {{ border-bottom:none; }}
             .qa-q {{ color:var(--text); margin-bottom:5px; }}
             .qa-a {{ color:var(--text-secondary); }}
