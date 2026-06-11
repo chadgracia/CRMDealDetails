@@ -14,6 +14,25 @@ NEWS_SKIP_COMPANIES = {
     "1x",
 }
 
+QUESTION_CATALOG_BUYER = [   # shown on SELL orders (a buyer asking about the seller)
+    {"id": "direct_trade", "q": "Are you able to do a direct trade?",          "field": None},
+    {"id": "deadline",     "q": "When is the deadline?",                        "field": None},
+    {"id": "class",        "q": "Common or preferred?",                         "field": "Class"},
+    {"id": "min_max",      "q": "What is the minimum / maximum size?",          "field": "min_max"},
+    {"id": "nda_l1",       "q": "Full transparency on the L1 manager under NDA?","field": None},
+    {"id": "accept_bid",   "q": "Would you accept this bid?",                   "field": None},
+    {"id": "upfront_fee",  "q": "Upfront fee instead of mgmt/carry?",           "field": None},
+]
+QUESTION_CATALOG_SELLER = [  # shown on BUY orders (a seller asking about the buyer)
+    {"id": "cash_on_hand", "q": "Do you have cash on hand?",                    "field": None},
+    {"id": "qp_accredited","q": "Are you a QP or accredited?",                  "field": None},
+    {"id": "iqf_done",     "q": "Have you completed the IQF with Rainmaker?",   "field": None},
+    {"id": "on_cap_table", "q": "Are you already on the cap table?",            "field": None},
+    {"id": "no_data_room", "q": "Can you confirm no data room / financials needed?", "field": None},
+    {"id": "accept_common","q": "Would you accept common shares?",             "field": None},
+    {"id": "move_bid_up",  "q": "Would you move your bid up?",                  "field": None},
+]
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -289,6 +308,85 @@ def map_option_value(field, value):
         return ', '.join([options.get(field, {}).get(str(v), v) for v in value])
     return options.get(field, {}).get(str(value), value)
 
+def render_qa_box(deal_type, mapped_fields, deal_id, deal_name):
+    """Build the right-hand 'Questions about this deal' box (display only).
+
+    Picks the buyer or seller question set based on the deal type, marks
+    questions that can be auto-answered from existing deal fields, and renders
+    an 'Ask' mailto button (built like the existing Bid button) for the rest.
+    """
+    if deal_type == "Sell Order":
+        catalog = QUESTION_CATALOG_BUYER
+    elif deal_type == "Buy Order":
+        catalog = QUESTION_CATALOG_SELLER
+    else:
+        catalog = QUESTION_CATALOG_BUYER
+
+    rows_html = ""
+    for item in catalog:
+        question_text = item["q"]
+        field = item["field"]
+        answer = None
+
+        if field == "Class":
+            class_val = mapped_fields.get('Class')
+            if class_val:
+                answer = map_option_value('Class', mapped_fields.get('Class'))
+        elif field == "min_max":
+            if mapped_fields.get('Min Deal Size') or mapped_fields.get('Max Deal Size'):
+                answer = ("Min " + format_currency(mapped_fields.get('Min Deal Size', ''))
+                          + " / Max " + format_currency(mapped_fields.get('Max Deal Size', '')))
+        # field is None -> never auto-answered, always render the Ask control.
+
+        if answer:
+            rows_html += (
+                f'<div class="qa-row">'
+                f'<div class="qa-q">{question_text}</div>'
+                f'<div class="qa-a">{answer}</div>'
+                f'</div>'
+            )
+        else:
+            subject = urllib.parse.quote(f"Question on: {deal_name} - {deal_id}")
+            body = urllib.parse.quote(
+                f"Hello Chad,\n\nRegarding {deal_name} (ID: {deal_id}), please ask the "
+                f"counterparty:\n\n{question_text}\n\nThank you."
+            )
+            mailto = f"mailto:cgracia@rainmakersecurities.com?subject={subject}&body={body}"
+            rows_html += (
+                f'<div class="qa-row">'
+                f'<div class="qa-q">{question_text}</div>'
+                f'<a href="{mailto}" class="btn">Ask</a>'
+                f'</div>'
+            )
+
+    # Plain (non-f) string so the JS braces stay literal and need no escaping.
+    script = (
+        "<script>"
+        "(function() {"
+        "  var input = document.getElementById('qaSearch');"
+        "  if (!input) return;"
+        "  input.addEventListener('input', function() {"
+        "    var term = input.value.toLowerCase();"
+        "    var rows = document.querySelectorAll('.qa-box .qa-row');"
+        "    rows.forEach(function(row) {"
+        "      var q = row.querySelector('.qa-q');"
+        "      var text = q ? q.textContent.toLowerCase() : '';"
+        "      row.style.display = text.indexOf(term) === -1 ? 'none' : '';"
+        "    });"
+        "  });"
+        "})();"
+        "</script>"
+    )
+
+    return (
+        '<aside class="qa-box">'
+        '<h2>Questions about this deal</h2>'
+        '<input type="text" id="qaSearch" placeholder="Filter questions...">'
+        + rows_html
+        + script
+        + '</aside>'
+    )
+
 def test_news_api(company_name, max_articles=5):
     """Fetch news articles for a given company using urllib."""
     # Construct the URL for the API call
@@ -452,6 +550,9 @@ def lambda_handler(event, context):
     
     bid_button_text = "Offer" if map_option_value('Type', mapped_fields.get('Type', [])) == "Buy Order" else "Bid"
 
+    deal_type = map_option_value('Type', mapped_fields.get('Type', []))
+    qa_box_html = render_qa_box(deal_type, mapped_fields, deal_id, deal_name)
+
     def generate_table_html(data):
         mid = len(data) // 2
         left_column = data[:mid]
@@ -559,6 +660,14 @@ def lambda_handler(event, context):
                 font-weight: bold;
                 margin-bottom: 3px;
             }}
+            .deal-body {{ display:flex; gap:24px; align-items:flex-start; flex-wrap:wrap; }}
+            .deal-main {{ flex:1; min-width:320px; }}
+            .qa-box {{ width:340px; border:1px solid var(--border-strong); border-radius:8px;
+                       padding:16px; background:#faf8f3; }}
+            .qa-box h2 {{ margin-top:0; }}
+            .qa-row {{ padding:8px 0; border-bottom:1px solid var(--border-strong); }}
+            #qaSearch {{ width:100%; padding:8px; margin-bottom:12px; box-sizing:border-box; }}
+            @media (max-width:860px) {{ .qa-box {{ width:100%; }} }}
         </style>
     </head>
     <body>
@@ -581,8 +690,13 @@ def lambda_handler(event, context):
         <div class="company-summary">{company_summary}</div>
         {catalyst_html}
 
+        <div class="deal-body">
+            <div class="deal-main">
 {generate_table_html(table_data)}
-        
+            </div>
+            {qa_box_html}
+        </div>
+
         <div id="spvSection" style="display: {'' if map_option_value('Structure', mapped_fields.get('Structure', [])) == 'Fund' else 'none'}">
         <h2>SPV Details</h2>
         {generate_table_html(spv_data)}
