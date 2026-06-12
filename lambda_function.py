@@ -672,13 +672,25 @@ def lambda_handler(event, context):
                        color:var(--text-secondary); background:#fff; text-decoration:none; }}
             .qa-ask:hover {{ background:#f0ece3; }}
             @media (max-width:860px) {{ .qa-box {{ width:100%; }} }}
+            .copy-id {{ display:inline-flex; vertical-align:middle; margin:0 4px; color:var(--text-secondary); cursor:pointer; }}
+            .copy-id:hover {{ color:var(--accent); }}
+            .copy-id.copied {{ color:#16a34a; }}
         </style>
     </head>
     <body>
         <div class="header">
             <div class="header-content">
                 <h1><strong>{deal_name}{get_structure_description(map_option_value('Structure', mapped_fields.get('Structure', [])))}</strong></h1>
-                <div class="deal-id">Deal ID: {deal_id} (Updated: {format_date(deal_data.get('updated_at', ''))})</div>
+                <div class="deal-id">Deal ID: {deal_id} <span class="copy-id" onclick="copyDealId('{deal_id}', this)" title="Copy Deal ID"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></span> (Updated: {format_date(deal_data.get('updated_at', ''))})</div>
+                <script>
+                function copyDealId(id, el) {{
+                    navigator.clipboard.writeText(id).then(function() {{
+                        el.classList.add('copied');
+                        el.setAttribute('title', 'Copied!');
+                        setTimeout(function() {{ el.classList.remove('copied'); el.setAttribute('title', 'Copy Deal ID'); }}, 1200);
+                    }});
+                }}
+                </script>
             </div>
             <div class="logo-container">
                 <img src="{get_company_logo_url(company_name)}" 
