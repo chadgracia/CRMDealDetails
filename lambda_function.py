@@ -325,11 +325,17 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name):
         catalog = QUESTION_CATALOG_BUYER
 
     structure = map_option_value('Structure', mapped_fields.get('Structure', []))
-    structure = structure if isinstance(structure, str) else ', '.join(structure)
+    if isinstance(structure, (list, tuple)):
+        structure = ', '.join(str(x) for x in structure)
+    elif not isinstance(structure, str):
+        structure = str(structure or '')
     is_spv = 'Fund' in structure
 
     layers = map_option_value('Layers', mapped_fields.get('Layers', []))
-    layers = layers if isinstance(layers, str) else ', '.join(layers)
+    if isinstance(layers, (list, tuple)):
+        layers = ', '.join(str(x) for x in layers)
+    elif not isinstance(layers, str):
+        layers = str(layers or '')
     is_multilayer = ('2-Layer' in layers) or ('3-Layer' in layers)
 
     catalog = [it for it in catalog
