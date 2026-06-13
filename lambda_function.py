@@ -327,10 +327,14 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name):
     structure = map_option_value('Structure', mapped_fields.get('Structure', []))
     structure = structure if isinstance(structure, str) else ', '.join(structure)
     is_spv = 'Fund' in structure
-    is_direct = 'Direct' in structure
+
+    layers = map_option_value('Layers', mapped_fields.get('Layers', []))
+    layers = layers if isinstance(layers, str) else ', '.join(layers)
+    is_multilayer = ('2-Layer' in layers) or ('3-Layer' in layers)
+
     catalog = [it for it in catalog
                if not (is_spv and it["id"] == "direct_trade")
-               and not (is_direct and it["id"] == "nda_l1")]
+               and not (it["id"] == "nda_l1" and not is_multilayer)]
 
     FORM_URL = "https://s5qv2qkmjt2qejliwchvqukseq0wgwff.lambda-url.us-east-1.on.aws/"
 
