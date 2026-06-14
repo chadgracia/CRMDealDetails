@@ -378,7 +378,7 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name):
 
     return (
         '<aside class="qa-box">'
-        '<h2>Questions about this deal</h2>'
+        f'<h2>Questions from the {"Seller" if deal_type == "Buy Order" else "Buyer"}</h2>'
         f'<form method="POST" action="{FORM_URL}">'
         '<input type="hidden" name="qa" value="submit">'
         f'<input type="hidden" name="deal_id" value="{deal_id}">'
