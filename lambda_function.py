@@ -384,7 +384,7 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name):
         f'<input type="hidden" name="deal_id" value="{deal_id}">'
         + rows
         + '<input type="email" name="buyer_email" placeholder="Your email (for the answers)" required class="qa-email">'
-        + '<button type="submit" class="qa-send">Send to counterparty</button>'
+        + f'<button type="submit" class="qa-send">Send Question to {"Buyer" if deal_type == "Buy Order" else "Seller"}</button>'
         + '</form>'
         + '</aside>'
     )
