@@ -26,6 +26,7 @@ QUESTION_CATALOG_BUYER = [   # shown on SELL orders (a buyer asking about the se
     {"id": "direct_trade", "q": "Do you have company permission to directly transfer?",              "field": None},
 ]
 QUESTION_CATALOG_SELLER = [  # shown on BUY orders (a seller asking about the buyer)
+    {"id": "accept_bid",   "q": "Would you accept a bid of ___?",               "field": None},
     {"id": "cash_on_hand", "q": "Do you have cash on hand?",                    "field": None},
     {"id": "qp_accredited","q": "Are you a QP or accredited?",                  "field": None},
     {"id": "iqf_done",     "q": "Have you completed the IQF with Rainmaker?",   "field": None},
@@ -342,6 +343,7 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name):
     elif not isinstance(layers, str):
         layers = str(layers or '')
     is_multilayer = ('2-Layer' in layers) or ('3-Layer' in layers)
+    is_tender = str(mapped_fields.get('Price Status', '')) == '7000239'
 
     catalog = [it for it in catalog
                if not (is_spv and it["id"] == "direct_trade")
@@ -364,6 +366,10 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name):
         if qid == "seller_fee" and (mapped_fields.get('Seller Fee') or not is_spv):
             continue
         if qid == "upfront_fee" and not is_spv:
+            continue
+        if qid == "accept_bid" and is_tender:
+            continue
+        if qid == "qp_accredited" and not is_spv:
             continue
 
         rows += (
