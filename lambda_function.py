@@ -23,7 +23,7 @@ QUESTION_CATALOG_BUYER = [   # shown on SELL orders (a buyer asking about the se
     {"id": "seller_fee",   "q": "What is the seller's one-time fee?",                               "field": "Seller Fee"},
     {"id": "upfront_fee",  "q": "Would you accept an upfront fee instead of management fee and carry?", "field": None},
     {"id": "nda_l1",       "q": "Can you provide full transparency on the L1 manager under an NDA?", "field": None},
-    {"id": "direct_trade", "q": "Are you able to do a direct trade?",                               "field": None},
+    {"id": "direct_trade", "q": "Do you have company permission to directly transfer?",              "field": None},
 ]
 QUESTION_CATALOG_SELLER = [  # shown on BUY orders (a seller asking about the buyer)
     {"id": "cash_on_hand", "q": "Do you have cash on hand?",                    "field": None},
@@ -361,7 +361,9 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name):
             continue
         if qid == "shares_avail" and mapped_fields.get('Shares'):
             continue
-        if qid == "seller_fee" and mapped_fields.get('Seller Fee'):
+        if qid == "seller_fee" and (mapped_fields.get('Seller Fee') or not is_spv):
+            continue
+        if qid == "upfront_fee" and not is_spv:
             continue
 
         rows += (
