@@ -559,8 +559,8 @@ def lambda_handler(event, context):
 
     deal_type = map_option_value('Type', mapped_fields.get('Type', []))
     qa_box_html = render_qa_box(deal_type, mapped_fields, deal_id, deal_name)
-    messaging_val = map_option_value('Messaging', mapped_fields.get('Messaging', ''))
-    hide_questions = (messaging_val == 'Disallow')
+    _msg_raw = (deal_data.get('custom_fields') or {}).get('custom_label_4001285')
+    hide_questions = (str(_msg_raw) == '7187011')
 
     def generate_table_html(data):
         mid = len(data) // 2
@@ -732,7 +732,7 @@ def lambda_handler(event, context):
         {generate_table_html(spv_data)}
         </div>
             </div>
-            <div style="display: {'none' if hide_questions else ''}">{qa_box_html}</div>
+            {'' if hide_questions else qa_box_html}
         </div>
         <!-- News Section -->
         <div id="newsSection" class="news-section">
