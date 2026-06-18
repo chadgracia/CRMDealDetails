@@ -187,6 +187,7 @@ def map_custom_fields(custom_fields):
         'custom_label_3790429': 'Company LR Val ($Bn)',
         'custom_label_3064330': 'Class',
         'custom_label_3064360': 'Structure',
+        'custom_label_4001285': 'Messaging',
         'custom_label_3938748': 'Seller Type',
         'custom_label_3938749': 'Ownership Status',
         'custom_label_3938750': 'Price Status',
@@ -291,6 +292,10 @@ def map_option_value(field, value):
             '6250093': 'No Forwards',
             '6361933': 'Unknown',
             '5077909': 'None'
+        },
+        'Messaging': {
+            '7187010': 'Allow',
+            '7187011': 'Disallow'
         },
         'Status': {
             '1': 'Open',
@@ -554,6 +559,8 @@ def lambda_handler(event, context):
 
     deal_type = map_option_value('Type', mapped_fields.get('Type', []))
     qa_box_html = render_qa_box(deal_type, mapped_fields, deal_id, deal_name)
+    messaging_val = map_option_value('Messaging', mapped_fields.get('Messaging', ''))
+    hide_questions = (messaging_val == 'Disallow')
 
     def generate_table_html(data):
         mid = len(data) // 2
@@ -725,7 +732,7 @@ def lambda_handler(event, context):
         {generate_table_html(spv_data)}
         </div>
             </div>
-            {qa_box_html}
+            <div style="display: {'none' if hide_questions else ''}">{qa_box_html}</div>
         </div>
         <!-- News Section -->
         <div id="newsSection" class="news-section">
