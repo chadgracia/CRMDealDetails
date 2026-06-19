@@ -716,6 +716,13 @@ def lambda_handler(event, context):
             .copy-id {{ display:inline-flex; vertical-align:middle; margin:0 4px; color:var(--text-secondary); cursor:pointer; }}
             .copy-id:hover {{ color:var(--accent); }}
             .copy-id.copied {{ color:#16a34a; }}
+            .bid-btn {{
+                background-color: #3d7355;
+                color: #fff;
+            }}
+            .bid-btn:hover {{
+                background-color: #345f48;
+            }}
         </style>
     </head>
     <body>
