@@ -192,6 +192,7 @@ def map_custom_fields(custom_fields):
         'custom_label_3938748': 'Seller Type',
         'custom_label_3938749': 'Ownership Status',
         'custom_label_3938750': 'Price Status',
+        'custom_label_3952402': 'Data Room',
         'custom_label_3064357': 'Private Notes',
         'summary': 'Notes',
         'custom_label_1958': 'Type',
@@ -344,6 +345,7 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name):
         layers = str(layers or '')
     is_multilayer = ('2-Layer' in layers) or ('3-Layer' in layers)
     is_tender = str(mapped_fields.get('Price Status', '')) == '7000239'
+    is_dataroom = str(mapped_fields.get('Data Room', '')) == '7038265'
 
     catalog = [it for it in catalog
                if not (is_spv and it["id"] == "direct_trade")
@@ -372,6 +374,8 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name):
         if qid == "move_bid_up" and is_tender:
             continue
         if qid == "qp_accredited" and not is_spv:
+            continue
+        if qid == "no_data_room" and is_dataroom:
             continue
 
         rows += (
