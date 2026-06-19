@@ -561,8 +561,8 @@ def lambda_handler(event, context):
     elif _dr == DR_NO:
         data_room_display = 'No'
     else:                       # Confirm, null, or missing -> not definitive
-        data_room_display = ''  # blank
-    ask_data_room = (data_room_display == '')
+        data_room_display = '?'  # unset
+    ask_data_room = (data_room_display == '?')
 
     spv_data = [
         ("Layers", map_option_value('Layers', mapped_fields.get('Layers', ''))),
