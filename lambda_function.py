@@ -31,7 +31,7 @@ QUESTION_CATALOG_SELLER = [  # shown on BUY orders (a seller asking about the bu
     {"id": "qp_accredited","q": "Are you a QP or accredited?",                  "field": None},
     {"id": "iqf_done",     "q": "Have you completed the IQF with Rainmaker?",   "field": None},
     {"id": "on_cap_table", "q": "Are you already on the cap table?",            "field": None},
-    {"id": "no_data_room", "q": "Can you confirm no data room / financials needed?", "field": None},
+    {"id": "no_data_room", "q": "Is there a data room or financials available?", "field": None},
     {"id": "accept_common","q": "Would you accept common shares?",             "field": None},
     {"id": "move_bid_up",  "q": "Would you move your bid up?",                  "field": None},
 ]
@@ -192,7 +192,6 @@ def map_custom_fields(custom_fields):
         'custom_label_3938748': 'Seller Type',
         'custom_label_3938749': 'Ownership Status',
         'custom_label_3938750': 'Price Status',
-        'custom_label_3952402': 'Data Room',
         'custom_label_3064357': 'Private Notes',
         'summary': 'Notes',
         'custom_label_1958': 'Type',
@@ -317,7 +316,7 @@ def map_option_value(field, value):
         return ', '.join([options.get(field, {}).get(str(v), v) for v in value])
     return options.get(field, {}).get(str(value), value)
 
-def render_qa_box(deal_type, mapped_fields, deal_id, deal_name):
+def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=True):
     """Build the right-hand 'Questions about this deal' box (display only).
 
     Picks the buyer or seller question set based on the deal type, marks
@@ -345,7 +344,6 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name):
         layers = str(layers or '')
     is_multilayer = ('2-Layer' in layers) or ('3-Layer' in layers)
     is_tender = str(mapped_fields.get('Price Status', '')) == '7000239'
-    is_dataroom = str(mapped_fields.get('Data Room', '')) == '7038265'
 
     catalog = [it for it in catalog
                if not (is_spv and it["id"] == "direct_trade")
@@ -375,7 +373,7 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name):
             continue
         if qid == "qp_accredited" and not is_spv:
             continue
-        if qid == "no_data_room" and is_dataroom:
+        if qid == "no_data_room" and not ask_data_room:
             continue
 
         rows += (
@@ -553,7 +551,19 @@ def lambda_handler(event, context):
         ("Max Deal Size", format_currency(mapped_fields.get('Max Deal Size', ''))),
         ("Notes", deal_data.get('summary', ''))
     ]
-    
+
+    _dr = (deal_data.get('custom_fields') or {}).get('custom_label_3952402')
+    _dr = str(_dr) if _dr is not None else None
+    DR_YES = '7038265'
+    DR_NO  = '7038266'
+    if _dr == DR_YES:
+        data_room_display = 'Yes'
+    elif _dr == DR_NO:
+        data_room_display = 'No'
+    else:                       # Confirm, null, or missing -> not definitive
+        data_room_display = ''  # blank
+    ask_data_room = (data_room_display == '')
+
     spv_data = [
         ("Layers", map_option_value('Layers', mapped_fields.get('Layers', ''))),
         ("Management Fee", format_percentage(mapped_fields.get('Management Fee', ''))),
@@ -563,7 +573,7 @@ def lambda_handler(event, context):
         ("Seller Type", map_option_value('Seller Type', mapped_fields.get('Seller Type', ''))),
         ("Price Status", map_option_value('Price Status', mapped_fields.get('Price Status', ''))),
         ("Ownership Status", map_option_value('Ownership Status', mapped_fields.get('Ownership Status', ''))),
-        ("GP SEC Registration", map_option_value('GP SEC Registration', mapped_fields.get('GP SEC Registration', ''))),
+        ("Data Room / VDR Available", data_room_display),
         ("SPV Jurisdiction", map_option_value('SPV Jurisdiction', mapped_fields.get('SPV Jurisdiction', ''))),
         ("GP Audit Status", map_option_value('GP Audit Status', mapped_fields.get('GP Audit Status', ''))),
         ("SPVs Managed", map_option_value('SPVs Managed', mapped_fields.get('SPVs Managed', '')))
@@ -572,7 +582,7 @@ def lambda_handler(event, context):
     bid_button_text = "Offer" if map_option_value('Type', mapped_fields.get('Type', [])) == "Buy Order" else "Bid"
 
     deal_type = map_option_value('Type', mapped_fields.get('Type', []))
-    qa_box_html = render_qa_box(deal_type, mapped_fields, deal_id, deal_name)
+    qa_box_html = render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room)
     _msg_raw = (deal_data.get('custom_fields') or {}).get('custom_label_4001285')
     hide_questions = (str(_msg_raw) == '7187011')
 
