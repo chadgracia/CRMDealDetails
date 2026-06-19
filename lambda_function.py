@@ -26,7 +26,7 @@ QUESTION_CATALOG_BUYER = [   # shown on SELL orders (a buyer asking about the se
     {"id": "direct_trade", "q": "Do you have company permission to directly transfer?",              "field": None},
 ]
 QUESTION_CATALOG_SELLER = [  # shown on BUY orders (a seller asking about the buyer)
-    {"id": "accept_bid",   "q": "Would you accept a bid of ___?",               "field": None},
+    {"id": "accept_bid",   "q": "Would you accept an offer of ___?",            "field": None},
     {"id": "cash_on_hand", "q": "Do you have cash on hand?",                    "field": None},
     {"id": "qp_accredited","q": "Are you a QP or accredited?",                  "field": None},
     {"id": "iqf_done",     "q": "Have you completed the IQF with Rainmaker?",   "field": None},
