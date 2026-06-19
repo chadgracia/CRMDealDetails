@@ -369,6 +369,8 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name):
             continue
         if qid == "accept_bid" and is_tender:
             continue
+        if qid == "move_bid_up" and is_tender:
+            continue
         if qid == "qp_accredited" and not is_spv:
             continue
 
