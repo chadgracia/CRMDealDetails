@@ -21,7 +21,7 @@ QUESTION_CATALOG_BUYER = [   # shown on SELL orders (a buyer asking about the se
     {"id": "min_max",      "q": "What is the minimum / maximum size?",                              "field": "min_max"},
     {"id": "shares_avail", "q": "How many shares are available to buy?",                            "field": "Shares"},
     {"id": "seller_fee",   "q": "What is the seller's one-time fee?",                               "field": "Seller Fee"},
-    {"id": "upfront_fee",  "q": "Would you accept an upfront fee instead of management fee and carry?", "field": None},
+    {"id": "upfront_fee",  "q": "Instead of man. fee / carry, would you accept an up front fee of (%):", "field": None},
     {"id": "nda_l1",       "q": "Can you provide full transparency on the L1 manager under an NDA?", "field": None},
     {"id": "direct_trade", "q": "Do you have company permission to directly transfer?",              "field": None},
 ]
@@ -31,9 +31,8 @@ QUESTION_CATALOG_SELLER = [  # shown on BUY orders (a seller asking about the bu
     {"id": "qp_accredited","q": "Are you a QP or accredited?",                  "field": None},
     {"id": "iqf_done",     "q": "Have you completed the IQF with Rainmaker?",   "field": None},
     {"id": "on_cap_table", "q": "Are you already on the cap table?",            "field": None},
-    {"id": "no_data_room", "q": "Is there a data room or financials available?", "field": None},
+    {"id": "no_data_room", "q": "Do you require a Data Room (VDR)?", "field": None},
     {"id": "accept_common","q": "Would you accept common shares?",             "field": None},
-    {"id": "move_bid_up",  "q": "Would you move your bid up?",                  "field": None},
 ]
 
 logger = logging.getLogger()
@@ -363,13 +362,15 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=Tr
             continue
         if qid == "shares_avail" and mapped_fields.get('Shares'):
             continue
+        # SPV with a known max ticket whose price tracks a tender/round: the max
+        # share count is moot, so don't ask it.
+        if qid == "shares_avail" and is_spv and is_tender and mapped_fields.get('Max Deal Size'):
+            continue
         if qid == "seller_fee" and (mapped_fields.get('Seller Fee') or not is_spv):
             continue
         if qid == "upfront_fee" and not is_spv:
             continue
         if qid == "accept_bid" and is_tender:
-            continue
-        if qid == "move_bid_up" and is_tender:
             continue
         if qid == "qp_accredited" and not is_spv:
             continue
