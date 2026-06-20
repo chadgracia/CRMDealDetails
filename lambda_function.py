@@ -400,6 +400,7 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=Tr
         '<input type="hidden" name="qa" value="submit">'
         f'<input type="hidden" name="deal_id" value="{deal_id}">'
         + rows
+        + '<input type="text" name="buyer_name" placeholder="Your name" class="qa-email">'
         + '<input type="email" name="buyer_email" placeholder="Your email (for the answers)" required class="qa-email">'
         + '<button type="submit" class="qa-send">Send</button>'
         + '</form>'
