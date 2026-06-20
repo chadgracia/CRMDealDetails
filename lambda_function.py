@@ -31,7 +31,7 @@ QUESTION_CATALOG_SELLER = [  # shown on BUY orders (a seller asking about the bu
     {"id": "qp_accredited","q": "Are you a QP or accredited?",                  "field": None},
     {"id": "iqf_done",     "q": "Have you completed the IQF with Rainmaker?",   "field": None},
     {"id": "on_cap_table", "q": "Are you already on the cap table?",            "field": None},
-    {"id": "no_data_room", "q": "Do you require a Data Room (VDR)?", "field": None},
+    {"id": "no_data_room", "q": "Do you need access to a data room to commit?", "field": None},
     {"id": "accept_common","q": "Would you accept common shares?",             "field": None},
 ]
 
@@ -376,7 +376,7 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=Tr
             continue
         if qid == "qp_accredited" and not is_spv:
             continue
-        if qid == "no_data_room":
+        if qid == "no_data_room" and not ask_data_room:
             continue
 
         rows += (
