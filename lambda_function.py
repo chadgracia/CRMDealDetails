@@ -31,9 +31,8 @@ QUESTION_CATALOG_SELLER = [  # shown on BUY orders (a seller asking about the bu
     {"id": "qp_accredited","q": "Are you a QP or accredited?",                  "field": None},
     {"id": "iqf_done",     "q": "Have you completed the IQF with Rainmaker?",   "field": None},
     {"id": "on_cap_table", "q": "Are you already on the cap table?",            "field": None},
-    {"id": "no_data_room", "q": "Is there a data room or financials available?", "field": None},
+    {"id": "no_data_room", "q": "Do you require a Data Room (VDR)?", "field": None},
     {"id": "accept_common","q": "Would you accept common shares?",             "field": None},
-    {"id": "move_bid_up",  "q": "Would you move your bid up?",                  "field": None},
 ]
 
 logger = logging.getLogger()
@@ -362,6 +361,10 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=Tr
         if qid == "min_max" and mapped_fields.get('Min Deal Size') and mapped_fields.get('Max Deal Size'):
             continue
         if qid == "shares_avail" and mapped_fields.get('Shares'):
+            continue
+        # SPV with a known max ticket whose price tracks a tender/round: the max
+        # share count is moot, so don't ask it.
+        if qid == "shares_avail" and is_spv and is_tender and mapped_fields.get('Max Deal Size'):
             continue
         if qid == "seller_fee" and (mapped_fields.get('Seller Fee') or not is_spv):
             continue
