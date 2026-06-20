@@ -21,7 +21,7 @@ QUESTION_CATALOG_BUYER = [   # shown on SELL orders (a buyer asking about the se
     {"id": "min_max",      "q": "What is the minimum / maximum size?",                              "field": "min_max"},
     {"id": "shares_avail", "q": "How many shares are available to buy?",                            "field": "Shares"},
     {"id": "seller_fee",   "q": "What is the seller's one-time fee?",                               "field": "Seller Fee"},
-    {"id": "upfront_fee",  "q": "Would you accept an upfront fee instead of management fee and carry?", "field": None},
+    {"id": "fee_structure","q": "Would you accept this fee structure?",                              "field": None},
     {"id": "nda_l1",       "q": "Can you provide full transparency on the L1 manager under an NDA?", "field": None},
     {"id": "direct_trade", "q": "Do you have company permission to directly transfer?",              "field": None},
 ]
@@ -365,7 +365,7 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=Tr
             continue
         if qid == "seller_fee" and (mapped_fields.get('Seller Fee') or not is_spv):
             continue
-        if qid == "upfront_fee" and not is_spv:
+        if qid == "fee_structure" and not is_spv:
             continue
         if qid == "accept_bid" and is_tender:
             continue
@@ -387,6 +387,21 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=Tr
                 '<div class="qa-bid">'
                 '<input type="number" name="bid_amount" step="any" placeholder="Bid $/share">'
                 '<input type="number" name="bid_size" step="any" placeholder="Size $ (opt)">'
+                '</div>'
+            )
+        if qid == "fee_structure":
+            # Pre-fill with the deal's current fees; leave blank if missing (preserve 0).
+            sf = mapped_fields.get('Seller Fee')        # One-time (custom_label_3940560)
+            mf = mapped_fields.get('Management Fee')    # Man
+            cr = mapped_fields.get('Carry')             # Carry
+            sf = '' if sf is None else sf
+            mf = '' if mf is None else mf
+            cr = '' if cr is None else cr
+            rows += (
+                '<div class="qa-fees">'
+                f'<label>One-time<input type="number" name="fee_onetime" step="any" value="{sf}"></label>'
+                f'<label>Man<input type="number" name="fee_man" step="any" value="{mf}"></label>'
+                f'<label>Carry<input type="number" name="fee_carry" step="any" value="{cr}"></label>'
                 '</div>'
             )
 
@@ -703,6 +718,9 @@ def lambda_handler(event, context):
             .qa-row input[type=checkbox] {{ margin-top:3px; flex:none; }}
             .qa-bid {{ margin:2px 0 6px 26px; display:flex; gap:6px; }}
             .qa-bid input {{ width:50%; padding:5px; font-size:12px; box-sizing:border-box; }}
+            .qa-fees {{ margin:2px 0 6px 26px; display:flex; gap:6px; }}
+            .qa-fees label {{ flex:1; display:flex; flex-direction:column; gap:2px; font-size:11px; color:var(--text-secondary); }}
+            .qa-fees input {{ width:100%; padding:5px; font-size:12px; box-sizing:border-box; }}
             .qa-email {{ width:100%; padding:7px; margin:8px 0 0; box-sizing:border-box; font-size:13px; }}
             .qa-send {{ width:100%; padding:9px; margin-top:16px; font-size:13px; font-weight:600; cursor:pointer; border:none; border-radius:6px; background:var(--accent); color:#fff; }}
             .qa-send:hover {{ opacity:0.9; }}
