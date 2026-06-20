@@ -703,8 +703,8 @@ def lambda_handler(event, context):
             .qa-row input[type=checkbox] {{ margin-top:3px; flex:none; }}
             .qa-bid {{ margin:2px 0 6px 26px; display:flex; gap:6px; }}
             .qa-bid input {{ width:50%; padding:5px; font-size:12px; box-sizing:border-box; }}
-            .qa-email {{ width:100%; padding:7px; margin:12px 0 8px; box-sizing:border-box; font-size:13px; }}
-            .qa-send {{ width:100%; padding:9px; font-size:13px; font-weight:600; cursor:pointer; border:none; border-radius:6px; background:var(--accent); color:#fff; }}
+            .qa-email {{ width:100%; padding:7px; margin:8px 0 0; box-sizing:border-box; font-size:13px; }}
+            .qa-send {{ width:100%; padding:9px; margin-top:16px; font-size:13px; font-weight:600; cursor:pointer; border:none; border-radius:6px; background:var(--accent); color:#fff; }}
             .qa-send:hover {{ opacity:0.9; }}
             .qa-row:last-child {{ border-bottom:none; }}
             .qa-q {{ color:var(--text); margin-bottom:5px; }}
