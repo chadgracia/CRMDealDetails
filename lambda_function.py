@@ -50,11 +50,10 @@ JWT_TOKEN = get_jwt_from_s3()
 
 def fetch_deal_data(deal_id):
     base_url = "https://api.pipelinecrm.com/api/v3"
-    jwt_token = JWT_TOKEN
+    api_key = JWT_TOKEN
 
-    deal_url = f"{base_url}/deals/{deal_id}"
+    deal_url = f"{base_url}/deals/{deal_id}.json?api_key={urllib.parse.quote(str(api_key))}"
     headers = {
-        "Authorization": f"Bearer {jwt_token}",
         "Content-Type": "application/json"
     }
     req = urllib.request.Request(deal_url, headers=headers)
@@ -96,10 +95,9 @@ def format_date(date_string):
 
 def fetch_company_data(company_id):
     base_url = "https://api.pipelinecrm.com/api/v3"
-    jwt_token = JWT_TOKEN
-    company_url = f"{base_url}/companies/{company_id}"
+    api_key = JWT_TOKEN
+    company_url = f"{base_url}/companies/{company_id}.json?api_key={urllib.parse.quote(str(api_key))}"
     headers = {
-        "Authorization": f"Bearer {jwt_token}",
         "Content-Type": "application/json"
     }
     req = urllib.request.Request(company_url, headers=headers)
