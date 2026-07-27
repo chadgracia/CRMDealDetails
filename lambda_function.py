@@ -315,7 +315,28 @@ def map_option_value(field, value):
         return ', '.join([options.get(field, {}).get(str(v), v) for v in value])
     return options.get(field, {}).get(str(value), value)
 
-def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=True):
+def fetch_person_iqf_yes(person_id):
+    """True if the deal's primary contact has IQF Status = Yes (6496840)."""
+    if not person_id:
+        return False
+    url = f"https://api.pipelinecrm.com/api/v3/people/{person_id}.json"
+    headers = {
+        "Authorization": f"Bearer {JWT_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req) as response:
+            person = json.loads(response.read().decode())
+    except Exception as e:
+        logger.error(f"IQF lookup failed for person {person_id}: {e}")
+        return False
+    v = (person.get("custom_fields") or {}).get("custom_label_3763008")
+    if isinstance(v, list):
+        v = v[0] if v else None
+    return str(v) == "6496840"
+
+def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=True, owner_iqf_yes=False):
     """Build the right-hand 'Questions about this deal' box (display only).
 
     Picks the buyer or seller question set based on the deal type, marks
@@ -377,6 +398,8 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=Tr
         if qid == "qp_accredited" and not is_spv:
             continue
         if qid == "no_data_room" and not ask_data_room:
+            continue
+        if qid == "iqf_done" and owner_iqf_yes:
             continue
 
         rows += (
@@ -601,7 +624,10 @@ def lambda_handler(event, context):
     bid_button_text = "Offer" if map_option_value('Type', mapped_fields.get('Type', [])) == "Buy Order" else "Bid"
 
     deal_type = map_option_value('Type', mapped_fields.get('Type', []))
-    qa_box_html = render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room)
+    owner_iqf_yes = False
+    if deal_type == "Buy Order":
+        owner_iqf_yes = fetch_person_iqf_yes((deal_data.get('primary_contact') or {}).get('id'))
+    qa_box_html = render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room, owner_iqf_yes)
     _msg_raw = (deal_data.get('custom_fields') or {}).get('custom_label_4001285')
     hide_questions = (str(_msg_raw) == '7187011')
 
