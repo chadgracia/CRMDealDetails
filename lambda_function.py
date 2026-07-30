@@ -53,6 +53,7 @@ SIMILAR_TRADES_BASE = "https://trades.graciagroup.com/"
 SIMILAR_MAX_PILLS = 12
 SIMILAR_GENERIC_SHARE = 0.25
 SIMILAR_RELAX_BELOW = 4
+SIMILAR_WEAK_TAGS = {'saas', 'b2b', 'b2c', 'it', 'technology', 'apps', 'internet'}
 
 
 def _sim_esc(s):
@@ -95,7 +96,8 @@ def compute_similar_companies(company_name, deal_type):
     universe = len(tag_map)
     if universe == 0:
         return [], side_param
-    generic = set(t for t, c in freq.items() if c > SIMILAR_GENERIC_SHARE * universe)
+    generic = set(t for t, c in freq.items()
+                  if c > SIMILAR_GENERIC_SHARE * universe or t.lower() in SIMILAR_WEAK_TAGS)
 
     target = set(tag_map.get(company_name) or [])
     if not target:
