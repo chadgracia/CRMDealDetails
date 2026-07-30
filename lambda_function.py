@@ -143,7 +143,105 @@ def compute_similar_companies(company_name, deal_type):
     return [r[2] for r in ranked[:SIMILAR_MAX_PILLS]], side_param
 
 
-def render_similar_companies(company_name, deal_type):
+def _sim_num(v):
+    try:
+        if v is None:
+            return None
+        s = str(v).replace('$', '').replace(',', '').replace('%', '').strip()
+        if not s:
+            return None
+        return float(s)
+    except Exception:
+        return None
+
+
+def _sim_span(s_lo, s_hi, c_lo, c_hi):
+    """How much of the source ticket range the candidate can absorb."""
+    if s_lo is None or s_hi is None or c_lo is None or c_hi is None:
+        return 0.5
+    lo = max(s_lo, c_lo)
+    hi = min(s_hi, c_hi)
+    if hi <= lo:
+        return -1.0
+    span = s_hi - s_lo
+    if span <= 0:
+        return 1.0
+    return min(1.0, (hi - lo) / span)
+
+
+def _sim_rank_map(items, key_fn, reverse):
+    """Rank-normalise to 0..1; entries with no value are left out."""
+    known = [i for i, it in enumerate(items) if key_fn(it) is not None]
+    known.sort(key=lambda i: key_fn(items[i]), reverse=reverse)
+    out = {}
+    n = len(known)
+    for pos, i in enumerate(known):
+        out[i] = 1.0 if n < 2 else 1.0 - (pos / float(n - 1))
+    return out
+
+
+def _sim_price(d):
+    p = _sim_num(d.get('net'))
+    if p is None:
+        p = _sim_num(d.get('gross'))
+    return p
+
+
+def _sim_pick_deal(source, cands, side_param):
+    """Score a company's candidate deals against the deal being viewed."""
+    if not cands:
+        return None, 0
+    if len(cands) == 1:
+        return cands[0].get('id'), 1
+
+    src = source or {}
+    s_lo = _sim_num(src.get('min_deal_size'))
+    s_hi = _sim_num(src.get('max_deal_size'))
+    s_struct = (src.get('structure') or '').strip().lower()
+    s_layers = (src.get('layers') or '').strip().lower()
+    s_mgmt = _sim_num(src.get('management_fee'))
+    s_carry = _sim_num(src.get('carry'))
+
+    price_rank = _sim_rank_map(cands, _sim_price, side_param != 'offer')
+    rec_rank = _sim_rank_map(cands, lambda d: (str(d.get('updated')) if d.get('updated') else None), True)
+
+    best_id = None
+    best_score = None
+    for idx, c in enumerate(cands):
+        c_struct = (c.get('structure') or '').strip().lower()
+        c_layers = (c.get('layers') or '').strip().lower()
+
+        score = 3.0 * _sim_span(s_lo, s_hi,
+                                _sim_num(c.get('min_deal_size')),
+                                _sim_num(c.get('max_deal_size')))
+        score += 3.0 * (1.0 if (s_struct and c_struct == s_struct) else 0.0)
+
+        if s_struct == 'fund' and c_struct == 'fund':
+            score += 1.5 * (1.0 if (s_layers and c_layers == s_layers) else 0.0)
+        elif s_struct and c_struct and s_struct != 'fund' and c_struct != 'fund':
+            score += 0.75
+
+        score += 0.5 * (1.0 if str(c.get('data_room') or '').strip().lower() == 'yes' else 0.0)
+
+        c_mgmt = _sim_num(c.get('management_fee'))
+        c_carry = _sim_num(c.get('carry'))
+        if None not in (s_mgmt, s_carry, c_mgmt, c_carry):
+            gap = abs(s_mgmt - c_mgmt) + abs(s_carry - c_carry)
+            score += 0.5 * max(0.0, 1.0 - (gap / 25.0))
+        else:
+            score += 0.25
+
+        score += 1.0 * price_rank.get(idx, 0.5)
+        score += 1.0 * rec_rank.get(idx, 0.5)
+
+        if best_score is None or score > best_score:
+            best_score = score
+            best_id = c.get('id')
+
+    return best_id, len(cands)
+
+
+def render_similar_companies(company_name, deal_type, deal_id):
     try:
         names, side_param = compute_similar_companies(company_name, deal_type)
     except Exception as e:
@@ -151,15 +249,39 @@ def render_similar_companies(company_name, deal_type):
         return ''
     if not names:
         return ''
+
+    deals = _sim_load_deals()
+    want_type = 'Buy Order' if deal_type == 'Buy Order' else 'Sell Order'
+
+    source = None
+    for d in deals:
+        if str(d.get('id')) == str(deal_id):
+            source = d
+            break
+
+    by_company = {}
+    for d in deals:
+        co = d.get('company')
+        if co and d.get('type') == want_type:
+            by_company.setdefault(co, []).append(d)
+
     pills = ''
     for co in names:
-        href = SIMILAR_TRADES_BASE + '?company=' + urllib.parse.quote(co) + '&amp;side=' + side_param
-        pills += '<a class="similar-pill" href="' + href + '">' + _sim_esc(co) + '</a>'
+        best_id, count = _sim_pick_deal(source, by_company.get(co) or [], side_param)
+        if best_id is None:
+            continue
+        href = '?deal_id=' + urllib.parse.quote(str(best_id))
+        pills += ('<a class="similar-pill" href="' + href + '">' + _sim_esc(co)
+                  + '<sup class="similar-count">' + str(count) + '</sup></a>')
+
+    if not pills:
+        return ''
     label = 'offers' if side_param == 'offer' else 'bids'
     return ('<aside class="similar-box">'
             '<h2>Explore Similar Companies</h2>'
             '<div class="similar-pills">' + pills + '</div>'
-            '<p class="similar-note">Live ' + label + ' in related industries.</p>'
+            '<p class="similar-note">Closest matching live ' + label + ' by size, structure and price. '
+            'Superscript shows how many are available.</p>'
             '</aside>')
 
 def fetch_deal_data(deal_id):
@@ -744,7 +866,7 @@ def lambda_handler(event, context):
     qa_box_html = render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room, owner_iqf_yes)
     _msg_raw = (deal_data.get('custom_fields') or {}).get('custom_label_4001285')
     hide_questions = (str(_msg_raw) == '7187011')
-    similar_html = render_similar_companies(company_name, deal_type)
+    similar_html = render_similar_companies(company_name, deal_type, deal_id)
     _side_inner = ('' if hide_questions else qa_box_html) + similar_html
     side_col_html = '<div class="side-col">' + _side_inner + '</div>' if _side_inner.strip() else ''
 
@@ -871,6 +993,8 @@ def lambda_handler(event, context):
                              border-radius:5px; text-decoration:none; }}
             .similar-pill:hover {{ background:#eef2f6; border-color:#7d8b99; }}
             .similar-note {{ margin:10px 0 0; font-size:11px; color:var(--text-secondary); }}
+            .similar-count {{ font-size:9px; font-weight:700; margin-left:3px;
+                              color:var(--text-secondary); }}
             .qa-row {{ display:flex; align-items:flex-start; gap:8px; padding:7px 0; border-bottom:1px solid var(--border-strong); cursor:pointer; }}
             .qa-row input[type=checkbox] {{ margin-top:3px; flex:none; }}
             .qa-bid {{ margin:2px 0 6px 26px; display:flex; gap:6px; }}
