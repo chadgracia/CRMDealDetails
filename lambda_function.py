@@ -988,13 +988,14 @@ def lambda_handler(event, context):
                             border-radius:8px; padding:14px 16px; background:#faf8f3; font-size:13px; }}
             .similar-box h2 {{ margin:0 0 10px 0; font-size:15px; }}
             .similar-pills {{ display:flex; flex-wrap:wrap; gap:6px; }}
-            .similar-pill {{ display:inline-block; background:#ffffff; border:1px solid #b8c2cc;
-                             color:var(--ink); font-weight:600; font-size:13px; padding:5px 11px;
-                             border-radius:5px; text-decoration:none; }}
-            .similar-pill:hover {{ background:#eef2f6; border-color:#7d8b99; }}
+            .similar-pill {{ display:inline-block; background:#CCDBEA; border:none;
+                             color:var(--ink); font-weight:500; font-size:14px; padding:6px 14px;
+                             border-radius:999px; text-decoration:none;
+                             transition:background-color 0.15s, color 0.15s; }}
+            .similar-pill:hover {{ background:#B7CBE1; }}
             .similar-note {{ margin:10px 0 0; font-size:11px; color:var(--text-secondary); }}
-            .similar-count {{ font-size:9px; font-weight:700; margin-left:3px;
-                              color:var(--text-secondary); }}
+            .similar-count {{ font-size:10px; font-weight:600; margin-left:4px;
+                              color:inherit; opacity:0.65; }}
             .qa-row {{ display:flex; align-items:flex-start; gap:8px; padding:7px 0; border-bottom:1px solid var(--border-strong); cursor:pointer; }}
             .qa-row input[type=checkbox] {{ margin-top:3px; flex:none; }}
             .qa-bid {{ margin:2px 0 6px 26px; display:flex; gap:6px; }}
