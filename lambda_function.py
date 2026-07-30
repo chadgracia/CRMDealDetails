@@ -48,6 +48,118 @@ def get_jwt_from_s3():
 
 JWT_TOKEN = get_jwt_from_s3()
 
+# --- Explore Similar Companies -------------------------------------------
+SIMILAR_TRADES_BASE = "https://trades.graciagroup.com/"
+SIMILAR_MAX_PILLS = 12
+SIMILAR_GENERIC_SHARE = 0.25
+SIMILAR_RELAX_BELOW = 4
+
+
+def _sim_esc(s):
+    return (s or '').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+
+def _sim_tags(value):
+    return [t.strip() for t in (value or '').split(',') if t.strip()]
+
+
+def _sim_load_deals():
+    try:
+        s3c = boto3.client('s3')
+        obj = s3c.get_object(Bucket='pipeline-public-deal-data', Key='pipeline_deals.json')
+        return json.loads(obj['Body'].read().decode('utf-8'))
+    except Exception as e:
+        logger.warning("similar-companies: could not load pipeline_deals.json: %s", e)
+        return []
+
+
+def compute_similar_companies(company_name, deal_type):
+    deals = _sim_load_deals()
+    if not deals or not company_name:
+        return [], ''
+
+    want_type = 'Buy Order' if deal_type == 'Buy Order' else 'Sell Order'
+    side_param = 'bid' if want_type == 'Buy Order' else 'offer'
+
+    tag_map = {}
+    for d in deals:
+        co = d.get('company')
+        if co and co not in tag_map:
+            tag_map[co] = _sim_tags(d.get('company_industry'))
+
+    freq = {}
+    for tl in tag_map.values():
+        for t in tl:
+            freq[t] = freq.get(t, 0) + 1
+
+    universe = len(tag_map)
+    if universe == 0:
+        return [], side_param
+    generic = set(t for t, c in freq.items() if c > SIMILAR_GENERIC_SHARE * universe)
+
+    target = set(tag_map.get(company_name) or [])
+    if not target:
+        return [], side_param
+
+    eligible = {}
+    for d in deals:
+        co = d.get('company')
+        if not co or co == company_name or d.get('type') != want_type:
+            continue
+        rec = eligible.get(co)
+        if rec is None:
+            rec = {'hi': False, 'up': ''}
+            eligible[co] = rec
+        if d.get('highlighted') == 'Yes':
+            rec['hi'] = True
+        u = str(d.get('updated') or '')
+        if u > rec['up']:
+            rec['up'] = u
+
+    def build(strict):
+        rows = []
+        for co, meta in eligible.items():
+            shared = target & set(tag_map.get(co) or [])
+            if not shared:
+                continue
+            if strict and len(shared) < 2 and shared.issubset(generic):
+                continue
+            score = 0.0
+            for t in shared:
+                score += 1.0 / freq[t]
+            if meta['hi']:
+                score *= 1.25
+            rows.append([score, meta['up'], co])
+        rows.sort(key=lambda r: r[2])
+        rows.sort(key=lambda r: r[1], reverse=True)
+        rows.sort(key=lambda r: r[0], reverse=True)
+        return rows
+
+    ranked = build(True)
+    if len(ranked) < SIMILAR_RELAX_BELOW:
+        ranked = build(False)
+    return [r[2] for r in ranked[:SIMILAR_MAX_PILLS]], side_param
+
+
+def render_similar_companies(company_name, deal_type):
+    try:
+        names, side_param = compute_similar_companies(company_name, deal_type)
+    except Exception as e:
+        logger.warning("similar-companies: ranking failed: %s", e)
+        return ''
+    if not names:
+        return ''
+    pills = ''
+    for co in names:
+        href = SIMILAR_TRADES_BASE + '?company=' + urllib.parse.quote(co) + '&amp;side=' + side_param
+        pills += '<a class="similar-pill" href="' + href + '">' + _sim_esc(co) + '</a>'
+    label = 'offers' if side_param == 'offer' else 'bids'
+    return ('<aside class="similar-box">'
+            '<h2>Explore Similar Companies</h2>'
+            '<div class="similar-pills">' + pills + '</div>'
+            '<p class="similar-note">Live ' + label + ' in related industries.</p>'
+            '</aside>')
+
 def fetch_deal_data(deal_id):
     base_url = "https://api.pipelinecrm.com/api/v3"
     jwt_token = JWT_TOKEN
@@ -630,6 +742,9 @@ def lambda_handler(event, context):
     qa_box_html = render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room, owner_iqf_yes)
     _msg_raw = (deal_data.get('custom_fields') or {}).get('custom_label_4001285')
     hide_questions = (str(_msg_raw) == '7187011')
+    similar_html = render_similar_companies(company_name, deal_type)
+    _side_inner = ('' if hide_questions else qa_box_html) + similar_html
+    side_col_html = '<div class="side-col">' + _side_inner + '</div>' if _side_inner.strip() else ''
 
     def generate_table_html(data):
         mid = len(data) // 2
@@ -743,6 +858,17 @@ def lambda_handler(event, context):
             .qa-box {{ width:300px; border:1px solid var(--border-strong); border-radius:8px;
                        padding:14px 16px; background:#faf8f3; font-size:13px; }}
             .qa-box h2 {{ margin:0 0 10px 0; font-size:15px; }}
+            .side-col {{ width:300px; display:flex; flex-direction:column; gap:16px; }}
+            .side-col .qa-box {{ width:100%; box-sizing:border-box; }}
+            .similar-box {{ width:100%; box-sizing:border-box; border:1px solid var(--border-strong);
+                            border-radius:8px; padding:14px 16px; background:#faf8f3; font-size:13px; }}
+            .similar-box h2 {{ margin:0 0 10px 0; font-size:15px; }}
+            .similar-pills {{ display:flex; flex-wrap:wrap; gap:6px; }}
+            .similar-pill {{ display:inline-block; background:#ffffff; border:1px solid #b8c2cc;
+                             color:var(--ink); font-weight:600; font-size:13px; padding:5px 11px;
+                             border-radius:5px; text-decoration:none; }}
+            .similar-pill:hover {{ background:#eef2f6; border-color:#7d8b99; }}
+            .similar-note {{ margin:10px 0 0; font-size:11px; color:var(--text-secondary); }}
             .qa-row {{ display:flex; align-items:flex-start; gap:8px; padding:7px 0; border-bottom:1px solid var(--border-strong); cursor:pointer; }}
             .qa-row input[type=checkbox] {{ margin-top:3px; flex:none; }}
             .qa-bid {{ margin:2px 0 6px 26px; display:flex; gap:6px; }}
@@ -811,7 +937,7 @@ def lambda_handler(event, context):
         {generate_table_html(spv_data)}
         </div>
             </div>
-            {'' if hide_questions else qa_box_html}
+            {side_col_html}
         </div>
         <!-- News Section -->
         <div id="newsSection" class="news-section">
