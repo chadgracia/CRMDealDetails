@@ -270,7 +270,7 @@ def render_similar_companies(company_name, deal_type, deal_id):
         best_id, count = _sim_pick_deal(source, by_company.get(co) or [], side_param)
         if best_id is None:
             continue
-        href = '?deal_id=' + urllib.parse.quote(str(best_id))
+        href = SIMILAR_TRADES_BASE + '?deal_id=' + urllib.parse.quote(str(best_id))
         pills += ('<a class="similar-pill" href="' + href + '">' + _sim_esc(co)
                   + '<sup class="similar-count">' + str(count) + '</sup></a>')
 
