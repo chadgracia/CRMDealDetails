@@ -52,7 +52,7 @@ JWT_TOKEN = get_jwt_from_s3()
 SIMILAR_TRADES_BASE = "https://trades.graciagroup.com/"
 SIMILAR_MAX_PILLS = 12
 SIMILAR_GENERIC_SHARE = 0.25
-SIMILAR_RELAX_BELOW = 4
+SIMILAR_RELAX_BELOW = 2
 SIMILAR_WEAK_TAGS = {'saas', 'b2b', 'b2c', 'it', 'technology', 'apps', 'internet'}
 
 
@@ -124,7 +124,7 @@ def compute_similar_companies(company_name, deal_type):
             shared = target & set(tag_map.get(co) or [])
             if not shared:
                 continue
-            if strict and len(shared) < 2 and shared.issubset(generic):
+            if strict and shared.issubset(generic):
                 continue
             score = 0.0
             for t in shared:
