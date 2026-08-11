@@ -467,6 +467,53 @@ def get_structure_description(structures):
         return f" - {' or '.join(descriptions)}"
     return ""
 
+# --- Deal stage badge -----------------------------------------------------
+# PipelineCRM carries the stage on the deal itself. It normally arrives as a
+# nested object (deal_stage: {"id": ..., "name": "Firm"}); some responses send
+# just the name as a string. get_deal_stage_name accepts either and returns ''
+# when the stage is absent, in which case no badge is rendered at all.
+STAGE_TOOLTIPS = {
+    'firm':     'Price and size confirmed.',
+    'inquiry':  'Awaiting key details.',
+    'obsolete': 'Sold out or taken down. Bid to re-open.',
+}
+
+
+def get_deal_stage_name(deal_data):
+    for key in ('deal_stage', 'stage'):
+        value = deal_data.get(key)
+        if isinstance(value, dict):
+            name = value.get('name') or ''
+        elif isinstance(value, str):
+            name = value
+        else:
+            continue
+        if name.strip():
+            return name.strip()
+    return ''
+
+
+def render_stage_badge(stage_name):
+    """Small pill above the deal table: Firm reads positive, Obsolete struck
+    through and muted, everything else neutral."""
+    if not stage_name:
+        return ''
+
+    key = stage_name.lower()
+    if key == 'firm':
+        css_class = 'stage-firm'
+    elif key == 'obsolete':
+        css_class = 'stage-obsolete'
+    else:
+        css_class = 'stage-neutral'
+
+    tooltip = STAGE_TOOLTIPS.get(key, '')
+    title_attr = f' title="{tooltip}"' if tooltip else ''
+    return (f'<div class="stage-row">'
+            f'<span class="stage-badge {css_class}"{title_attr}>{_sim_esc(stage_name)}</span>'
+            f'</div>')
+
+
 def map_option_value(field, value):
     options = {
         'Layers': {
@@ -817,6 +864,12 @@ def lambda_handler(event, context):
             f'</div>'
         )
 
+    # Deal stage (Inquiry / Firm / Obsolete / ...) -- logged so the exact set of
+    # stage names in use is visible in CloudWatch.
+    stage_name = get_deal_stage_name(deal_data)
+    logger.info(f"Deal stage: {stage_name or '(none)'} (raw: {deal_data.get('deal_stage')!r})")
+    stage_html = render_stage_badge(stage_name)
+
     table_data = [
         ("Type", map_option_value('Type', mapped_fields.get('Type', []))),
         ("Class", map_option_value('Class', mapped_fields.get('Class', ''))),
@@ -977,6 +1030,32 @@ def lambda_handler(event, context):
                 font-weight: bold;
                 margin-bottom: 3px;
             }}
+            .stage-row {{
+                margin: 0 0 18px 0;
+            }}
+            .stage-badge {{
+                display: inline-block;
+                font-family: var(--font-ui);
+                font-size: 11.5px;
+                font-weight: 600;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+                padding: 4px 14px;
+                border-radius: 999px;
+                border: 1px solid var(--border-strong);
+                background: #faf8f3;
+                color: var(--text-secondary);
+                cursor: default;
+            }}
+            .stage-firm {{
+                background: var(--pos);
+                border-color: var(--pos);
+                color: var(--surface);
+            }}
+            .stage-obsolete {{
+                color: var(--text-muted);
+                text-decoration: line-through;
+            }}
             .deal-body {{ display:flex; gap:24px; align-items:flex-start; flex-wrap:wrap; }}
             .deal-main {{ flex:1; min-width:320px; }}
             .qa-box {{ width:300px; border:1px solid var(--border-strong); border-radius:8px;
@@ -1054,6 +1133,7 @@ def lambda_handler(event, context):
         </div>
         <div class="company-summary">{company_summary}</div>
         {catalyst_html}
+        {stage_html}
 
         <div class="deal-body">
             <div class="deal-main">
