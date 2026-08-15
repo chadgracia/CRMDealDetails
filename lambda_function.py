@@ -691,8 +691,10 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=Tr
         if qid == "iqf_done" and owner_iqf_yes:
             continue
 
+        has_fields = qid in ("accept_bid", "fee_structure")
+        row_cls = "qa-row no-line" if has_fields else "qa-row"
         rows += (
-            f'<label class="qa-row">'
+            f'<label class="{row_cls}">'
             f'<input type="checkbox" name="q_{qid}" value="1">'
             f'<span class="qa-q">{question_text}</span>'
             f'</label>'
@@ -714,9 +716,9 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=Tr
             cr = '' if cr is None else cr
             rows += (
                 '<div class="qa-fees">'
-                f'<label>One-time<input type="number" name="fee_onetime" step="any" value="{sf}"></label>'
-                f'<label>Man<input type="number" name="fee_man" step="any" value="{mf}"></label>'
-                f'<label>Carry<input type="number" name="fee_carry" step="any" value="{cr}"></label>'
+                f'<label>One-time<input type="text" inputmode="decimal" name="fee_onetime" value="{sf}"></label>'
+                f'<label>Man<input type="text" inputmode="decimal" name="fee_man" value="{mf}"></label>'
+                f'<label>Carry<input type="text" inputmode="decimal" name="fee_carry" value="{cr}"></label>'
                 '</div>'
             )
 
@@ -729,6 +731,7 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=Tr
         f'<form method="POST" action="{FORM_URL}">'
         '<input type="hidden" name="qa" value="submit">'
         f'<input type="hidden" name="deal_id" value="{deal_id}">'
+        + "<label class=\"qa-row\" style=\"font-weight:600\"><input type=\"checkbox\" onclick='var b=this.checked;this.closest(\"form\").querySelectorAll(\"input[name^=q_]\").forEach(function(c){c.checked=b});'><span class=\"qa-q\">Select all</span></label>"
         + rows
         + '<input type="text" name="buyer_name" placeholder="Your name" class="qa-email">'
         + '<input type="email" name="buyer_email" placeholder="Your email (for the answers)" required class="qa-email">'
@@ -1084,6 +1087,8 @@ def lambda_handler(event, context):
             .qa-send {{ width:100%; padding:9px; margin-top:16px; font-size:13px; font-weight:600; cursor:pointer; border:none; border-radius:6px; background:var(--accent); color:#fff; }}
             .qa-send:hover {{ opacity:0.9; }}
             .qa-row:last-child {{ border-bottom:none; }}
+            .qa-row.no-line {{ border-bottom:none; }}
+            .qa-fees, .qa-bid {{ border-bottom:1px solid var(--border-strong); padding-bottom:12px; }}
             .qa-q {{ color:var(--text); margin-bottom:5px; }}
             .qa-a {{ color:var(--text-secondary); }}
             .qa-ask {{ display:inline-block; padding:3px 12px; font-size:12px;
