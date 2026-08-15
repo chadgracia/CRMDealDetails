@@ -1134,7 +1134,7 @@ def lambda_handler(event, context):
                      onerror="console.log('Logo failed to load: ' + this.src); this.src='https://bannerlogos.s3.us-east-1.amazonaws.com/default.png';">
             </div>
             <div class="button-group">
-                <a href="mailto:cgracia@rainmakersecurities.com?subject={urllib.parse.quote(f'{bid_button_text} on: {deal_name} - {deal_id}')}&body={urllib.parse.quote(f'Hello Chad,\n\nI would like to make this {bid_button_text.lower()} on {deal_name} (ID: {deal_id}).\n\n{bid_button_text}: $____________\nTransaction Size: ____________\n\nPlease let me know the next steps.\n\nThank you.')}" class="btn bid-btn">{bid_button_text}</a>
+                <a href="{DESK_URL}/bid/?name={urllib.parse.quote(company_name)}&side={'sell' if bid_button_text == 'Offer' else 'buy'}&deal_id={deal_id}{f'&px={urllib.parse.quote(str(gross_price))}' if gross_price else ''}" class="btn bid-btn">{bid_button_text}</a>
                 <a href="https://trades.graciagroup.com/" class="btn">Full Books</a>            
             </div>
         </div>
