@@ -677,6 +677,8 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=Tr
             continue
         if qid == "accept_bid" and is_tender:
             continue
+        if qid == "accept_bid" and deal_type == "Sell Order" and str(mapped_fields.get('Ownership Status', '')) == '7000237':
+            continue
         if qid == "move_bid_up":
             continue
         if qid == "qp_accredited" and not is_spv:
