@@ -49,6 +49,10 @@ def get_jwt_from_s3():
 
 JWT_TOKEN = get_jwt_from_s3()
 
+# Client-facing links go through CloudFront, which routes on path prefix —
+# keep the trailing slash on any path appended to this.
+DESK_URL = "https://desk.graciagroup.com"
+
 # --- Explore Similar Companies -------------------------------------------
 SIMILAR_TRADES_BASE = "https://trades.graciagroup.com/"
 SIMILAR_MAX_PILLS = 12
@@ -654,7 +658,7 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=Tr
                if not (is_spv and it["id"] == "direct_trade")
                and not (it["id"] == "nda_l1" and not is_multilayer)]
 
-    FORM_URL = "https://s5qv2qkmjt2qejliwchvqukseq0wgwff.lambda-url.us-east-1.on.aws/"
+    FORM_URL = DESK_URL + "/update/"
 
     rows = ""
     for item in catalog:
