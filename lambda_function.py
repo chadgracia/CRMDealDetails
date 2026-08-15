@@ -646,6 +646,13 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=Tr
         structure = str(structure or '')
     is_spv = 'Fund' in structure
 
+    # Match the Forward option by id, not by label: the 'No Forwards' label
+    # contains 'Forward' as a substring.
+    structure_ids = mapped_fields.get('Structure', [])
+    if not isinstance(structure_ids, (list, tuple)):
+        structure_ids = [structure_ids]
+    is_forward = '5077903' in [str(x) for x in structure_ids]
+
     layers = map_option_value('Layers', mapped_fields.get('Layers', []))
     if isinstance(layers, (list, tuple)):
         layers = ', '.join(str(x) for x in layers)
@@ -683,6 +690,10 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=Tr
         if qid == "accept_bid" and is_tender:
             continue
         if qid == "accept_bid" and deal_type == "Sell Order" and str(mapped_fields.get('Ownership Status', '')) == '7000237':
+            continue
+        # A forward exists precisely because the company won't permit a direct
+        # transfer, so asking about direct-transfer permission is moot.
+        if qid == "direct_trade" and is_forward:
             continue
         if qid == "move_bid_up":
             continue
