@@ -22,6 +22,7 @@ QUESTION_CATALOG_BUYER = [   # shown on SELL orders (a buyer asking about the se
     {"id": "shares_avail", "q": "How many shares are available to buy?",                            "field": "Shares"},
     {"id": "seller_fee",   "q": "What is the seller's one-time fee?",                               "field": "Seller Fee"},
     {"id": "fee_structure","q": "Would you accept this fee structure?",                              "field": None},
+    {"id": "data_room_avail","q": "Is a data room available for diligence?",                         "field": None},
     {"id": "nda_l1",       "q": "Can you provide full transparency on the L1 manager under an NDA?", "field": None},
     {"id": "direct_trade", "q": "Do you have company permission to directly transfer?",              "field": None},
 ]
@@ -684,6 +685,8 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=Tr
         if qid == "qp_accredited" and not is_spv:
             continue
         if qid == "no_data_room" and not ask_data_room:
+            continue
+        if qid == "data_room_avail" and not ask_data_room:
             continue
         if qid == "iqf_done" and owner_iqf_yes:
             continue
