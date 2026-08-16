@@ -34,6 +34,7 @@ QUESTION_CATALOG_SELLER = [  # shown on BUY orders (a seller asking about the bu
     {"id": "on_cap_table", "q": "Are you already on the cap table?",            "field": None},
     {"id": "no_data_room", "q": "Do you need access to a data room to commit?", "field": None},
     {"id": "accept_common","q": "Would you accept common shares?",             "field": None},
+    {"id": "accept_fund",  "q": "Would you accept a fund structure?",          "field": None},
 ]
 
 logger = logging.getLogger()
@@ -663,7 +664,8 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=Tr
 
     catalog = [it for it in catalog
                if not (is_spv and it["id"] == "direct_trade")
-               and not (it["id"] == "nda_l1" and not is_multilayer)]
+               and not (it["id"] == "nda_l1" and not is_multilayer)
+               and not (is_spv and it["id"] == "accept_fund")]
 
     FORM_URL = DESK_URL + "/update/"
 
