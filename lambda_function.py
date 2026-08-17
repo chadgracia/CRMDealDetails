@@ -23,11 +23,13 @@ QUESTION_CATALOG_BUYER = [   # shown on SELL orders (a buyer asking about the se
     {"id": "seller_fee",   "q": "What is the seller's one-time fee?",                               "field": "Seller Fee"},
     {"id": "fee_structure","q": "Would you accept this fee structure?",                              "field": None},
     {"id": "data_room_avail","q": "Is a data room available for diligence?",                         "field": None},
+    {"id": "fund_exemption", "q": "Is this a 3(c)(1) or 3(c)(7) exemption?",                         "field": None},
     {"id": "nda_l1",       "q": "Can you provide full transparency on the L1 manager under an NDA?", "field": None},
     {"id": "direct_trade", "q": "Do you have company permission to directly transfer?",              "field": None},
 ]
 QUESTION_CATALOG_SELLER = [  # shown on BUY orders (a seller asking about the buyer)
     {"id": "accept_bid",   "q": "Would you bid $___/share (gross)?",            "field": None},
+    {"id": "deadline",     "q": "When is the deadline to commit?",              "field": None},
     {"id": "cash_on_hand", "q": "Do you have cash on hand?",                    "field": None},
     {"id": "qp_accredited","q": "Are you a QP or accredited?",                  "field": None},
     {"id": "iqf_done",     "q": "Have you completed the IQF with Rainmaker?",   "field": None},
@@ -423,6 +425,7 @@ def map_custom_fields(custom_fields):
         'custom_label_3938752': 'SPV Jurisdiction',
         'custom_label_3938753': 'GP Audit Status',
         'custom_label_3938754': 'SPVs Managed',
+        'custom_label_4006089': 'Fund Exemption',
         'custom_label_3065488': 'Min Deal Size',
         'custom_label_3064645': 'Max Deal Size',
         'custom_label_3064363': 'Company LR (PPS)',
@@ -551,6 +554,10 @@ def map_option_value(field, value):
             '7000251': '4-5',
             '7000252': '6-10',
             '7000253': 'More than 10'
+        },
+        'Fund Exemption': {
+            '7200027': '3(c)(1)',
+            '7200028': '3(c)(7)'
         },
         'Class': {
             '5077831': 'Common',
@@ -700,6 +707,8 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=Tr
         if qid == "move_bid_up":
             continue
         if qid == "qp_accredited" and not is_spv:
+            continue
+        if qid == "fund_exemption" and (not is_spv or mapped_fields.get('Fund Exemption')):
             continue
         if qid == "no_data_room" and not ask_data_room:
             continue
@@ -933,7 +942,8 @@ def lambda_handler(event, context):
         ("Data Room / VDR Available", data_room_display),
         ("SPV Jurisdiction", map_option_value('SPV Jurisdiction', mapped_fields.get('SPV Jurisdiction', ''))),
         ("GP Audit Status", map_option_value('GP Audit Status', mapped_fields.get('GP Audit Status', ''))),
-        ("SPVs Managed", map_option_value('SPVs Managed', mapped_fields.get('SPVs Managed', '')))
+        ("SPVs Managed", map_option_value('SPVs Managed', mapped_fields.get('SPVs Managed', ''))),
+        ("Fund Exemption", map_option_value('Fund Exemption', mapped_fields.get('Fund Exemption', '')))
     ]
     
     bid_button_text = "Offer" if map_option_value('Type', mapped_fields.get('Type', [])) == "Buy Order" else "Bid"
