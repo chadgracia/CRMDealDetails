@@ -423,7 +423,6 @@ def map_custom_fields(custom_fields):
         'custom_label_3938743': 'Layers',
         'custom_label_3938751': 'GP SEC Registration',
         'custom_label_3938752': 'SPV Jurisdiction',
-        'custom_label_3938753': 'GP Audit Status',
         'custom_label_3938754': 'SPVs Managed',
         'custom_label_4006089': 'Fund Exemption',
         'custom_label_3065488': 'Min Deal Size',
@@ -542,11 +541,6 @@ def map_option_value(field, value):
             '7000254': 'Offshore',
             '7000245': 'Europe',
             '7000255': 'Other'
-        },
-        'GP Audit Status': {
-            '7000246': 'Yes, the GP is audited.',
-            '7000247': 'No',
-            '7000248': "Don't know."
         },
         'SPVs Managed': {
             '7000249': 'This would be the first.',
@@ -941,7 +935,6 @@ def lambda_handler(event, context):
         ("Ownership Status", map_option_value('Ownership Status', mapped_fields.get('Ownership Status', ''))),
         ("Data Room / VDR Available", data_room_display),
         ("SPV Jurisdiction", map_option_value('SPV Jurisdiction', mapped_fields.get('SPV Jurisdiction', ''))),
-        ("GP Audit Status", map_option_value('GP Audit Status', mapped_fields.get('GP Audit Status', ''))),
         ("SPVs Managed", map_option_value('SPVs Managed', mapped_fields.get('SPVs Managed', '')))
     ]
     if mapped_fields.get('Fund Exemption'):
