@@ -557,7 +557,7 @@ def map_option_value(field, value):
         },
         'Fund Exemption': {
             '7200027': '3(c)(1)',
-            '7200028': '3(c)(7)'
+            '7200028': '3(c)(7) - Qualified Purchasers only'
         },
         'Class': {
             '5077831': 'Common',
@@ -942,9 +942,13 @@ def lambda_handler(event, context):
         ("Data Room / VDR Available", data_room_display),
         ("SPV Jurisdiction", map_option_value('SPV Jurisdiction', mapped_fields.get('SPV Jurisdiction', ''))),
         ("GP Audit Status", map_option_value('GP Audit Status', mapped_fields.get('GP Audit Status', ''))),
-        ("SPVs Managed", map_option_value('SPVs Managed', mapped_fields.get('SPVs Managed', ''))),
-        ("Fund Exemption", map_option_value('Fund Exemption', mapped_fields.get('Fund Exemption', '')))
+        ("SPVs Managed", map_option_value('SPVs Managed', mapped_fields.get('SPVs Managed', '')))
     ]
+    if mapped_fields.get('Fund Exemption'):
+        spv_data.append(("Fund Exemption", map_option_value('Fund Exemption', mapped_fields.get('Fund Exemption', ''))))
+    _final_deadline = (company_custom_fields.get('custom_label_3902620') or '')
+    if _final_deadline:
+        spv_data.insert(0, ("Deadline", str(_final_deadline)[:10]))
     
     bid_button_text = "Offer" if map_option_value('Type', mapped_fields.get('Type', [])) == "Buy Order" else "Bid"
 
