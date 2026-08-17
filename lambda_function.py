@@ -550,7 +550,7 @@ def map_option_value(field, value):
             '7000253': 'More than 10'
         },
         'Fund Exemption': {
-            '7200027': '3(c)(1)',
+            '7200027': '3(c)(1) - Accredited Investors &amp; QPs',
             '7200028': '3(c)(7) - Qualified Purchasers only'
         },
         'Class': {
