@@ -875,7 +875,18 @@ def lambda_handler(event, context):
 
     gross_with_valuation = format_price_with_comparison(gross_price, gross_valuation, gross_comparison)
     net_with_valuation = format_price_with_comparison(net_price, net_valuation, net_comparison)
-    
+
+    # Direct-transfer Sell Order with no Net and no Gross at all -> solicit bids
+    _sol_type = map_option_value('Type', mapped_fields.get('Type', []))
+    _sol_struct = mapped_fields.get('Structure', [])
+    if not isinstance(_sol_struct, (list, tuple)):
+        _sol_struct = [_sol_struct]
+    _sol_direct = '6250090' in [str(x) for x in _sol_struct]
+    _sol_empty = lambda v: v is None or str(v).strip() in ('', 'None')
+    if _sol_type == "Sell Order" and _sol_direct and _sol_empty(gross_price) and _sol_empty(net_price):
+        gross_with_valuation = "Soliciting Bids: Click Above"
+        net_with_valuation = ""
+
     # Get company summary separately
     company_summary = company_data.get('description', '')
 
