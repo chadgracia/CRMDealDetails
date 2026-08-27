@@ -433,7 +433,6 @@ def map_custom_fields(custom_fields):
         'custom_label_3064360': 'Structure',
         'custom_label_4001285': 'Messaging',
         'custom_label_3938748': 'Seller Type',
-        'custom_label_3938749': 'Ownership Status',
         'custom_label_3938750': 'Price Status',
         'custom_label_3064357': 'Private Notes',
         'summary': 'Notes',
@@ -560,16 +559,13 @@ def map_option_value(field, value):
             '5077915': 'Any'
         },
         'Seller Type': {
-            '7000231': 'A GP (SPV manager) who owns the units for sale.',
-            '7000232': 'A GP (SPV manager) who is facilitating an LP sale of units.',
-            '7000233': 'An LP of an SPV who owns the units, with permission from GP to sell.',
-            '7000234': 'An LP of an SPV who owns the units; needs permission from GP to sell.',
-            '7000235': 'An owner with shares held via an online platform such as Forge, EquityZen, etc.',
-            '7020357': 'A GP (SPV manager) who is collecting firm orders as part of their bid.'
-        },
-        'Ownership Status': {
-            '7000236': 'Seller has legal ownership of shares now.',
-            '7000237': 'Seller intends to acquire shares.'
+            '7020357': 'GP — syndicating new allocation',
+            '7000232': 'GP — facilitating LP sale',
+            '7000231': 'GP — selling own units',
+            '7205050': 'GP — selling entire SPV',
+            '7000233': 'LP — GP consent obtained',
+            '7000234': 'LP — GP consent needed',
+            '7000235': 'LP — platform holder'
         },
         'Price Status': {
             '7000238': 'Price is firm and unrelated to potential tender or round.',
@@ -692,7 +688,7 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=Tr
             continue
         if qid == "accept_bid" and is_tender:
             continue
-        if qid == "accept_bid" and deal_type == "Sell Order" and str(mapped_fields.get('Ownership Status', '')) == '7000237':
+        if qid == "accept_bid" and deal_type == "Sell Order" and str(mapped_fields.get('Seller Type', '')) == '7020357':
             continue
         # A forward exists precisely because the company won't permit a direct
         # transfer, so asking about direct-transfer permission is moot.
@@ -930,9 +926,8 @@ def lambda_handler(event, context):
         ("Carry", format_percentage(mapped_fields.get('Carry', ''))),
         ("Seller Fee", format_percentage(mapped_fields.get('Seller Fee', ''))),
         ("Partner Fee", format_percentage(mapped_fields.get('Partner Fee', ''))),
-        ("Seller Type", map_option_value('Seller Type', mapped_fields.get('Seller Type', ''))),
+        ("Seller Role", map_option_value('Seller Type', mapped_fields.get('Seller Type', ''))),
         ("Price Status", map_option_value('Price Status', mapped_fields.get('Price Status', ''))),
-        ("Ownership Status", map_option_value('Ownership Status', mapped_fields.get('Ownership Status', ''))),
         ("Data Room / VDR Available", data_room_display),
         ("SPV Jurisdiction", map_option_value('SPV Jurisdiction', mapped_fields.get('SPV Jurisdiction', ''))),
         ("SPVs Managed", map_option_value('SPVs Managed', mapped_fields.get('SPVs Managed', '')))
