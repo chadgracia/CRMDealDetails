@@ -934,9 +934,9 @@ def lambda_handler(event, context):
     ]
     if mapped_fields.get('Fund Exemption'):
         spv_details.append(("Fund Exemption", map_option_value('Fund Exemption', mapped_fields.get('Fund Exemption', ''))))
-    _final_deadline = (company_custom_fields.get('custom_label_3902620') or '')
+    _final_deadline = ((deal_data.get('custom_fields') or {}).get('custom_label_4006402') or '')
     if _final_deadline:
-        spv_details.insert(0, ("Deadline", str(_final_deadline)[:10]))
+        spv_details.insert(0, ("Deadline", str(_final_deadline)[:10].replace('/', '-')))
     spv_data = spv_details + spv_fees
     spv_split = len(spv_details)
     
