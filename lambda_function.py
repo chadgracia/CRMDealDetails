@@ -937,8 +937,8 @@ def lambda_handler(event, context):
     _final_deadline = (company_custom_fields.get('custom_label_3902620') or '')
     if _final_deadline:
         spv_details.insert(0, ("Deadline", str(_final_deadline)[:10]))
-    spv_data = spv_fees + spv_details
-    spv_split = len(spv_fees)
+    spv_data = spv_details + spv_fees
+    spv_split = len(spv_details)
     
     bid_button_text = "Offer" if map_option_value('Type', mapped_fields.get('Type', [])) == "Buy Order" else "Bid"
 
