@@ -920,23 +920,25 @@ def lambda_handler(event, context):
         data_room_display = '?'  # unset
     ask_data_room = (data_room_display == '?')
 
-    spv_data = [
-        ("Layers", map_option_value('Layers', mapped_fields.get('Layers', ''))),
+    spv_fees = [
         ("Management Fee", format_percentage(mapped_fields.get('Management Fee', ''))),
         ("Carry", format_percentage(mapped_fields.get('Carry', ''))),
         ("Seller Fee", format_percentage(mapped_fields.get('Seller Fee', ''))),
-        ("Partner Fee", format_percentage(mapped_fields.get('Partner Fee', ''))),
+        ("Partner Fee", format_percentage(mapped_fields.get('Partner Fee', '')))
+    ]
+    spv_details = [
+        ("Layers", map_option_value('Layers', mapped_fields.get('Layers', ''))),
         ("Seller Role", map_option_value('Seller Type', mapped_fields.get('Seller Type', ''))),
         ("Price Status", map_option_value('Price Status', mapped_fields.get('Price Status', ''))),
-        ("Data Room / VDR Available", data_room_display),
-        ("SPV Jurisdiction", map_option_value('SPV Jurisdiction', mapped_fields.get('SPV Jurisdiction', ''))),
-        ("SPVs Managed", map_option_value('SPVs Managed', mapped_fields.get('SPVs Managed', '')))
+        ("Data Room / VDR Available", data_room_display)
     ]
     if mapped_fields.get('Fund Exemption'):
-        spv_data.append(("Fund Exemption", map_option_value('Fund Exemption', mapped_fields.get('Fund Exemption', ''))))
+        spv_details.append(("Fund Exemption", map_option_value('Fund Exemption', mapped_fields.get('Fund Exemption', ''))))
     _final_deadline = (company_custom_fields.get('custom_label_3902620') or '')
     if _final_deadline:
-        spv_data.insert(0, ("Deadline", str(_final_deadline)[:10]))
+        spv_details.insert(0, ("Deadline", str(_final_deadline)[:10]))
+    spv_data = spv_fees + spv_details
+    spv_split = len(spv_fees)
     
     bid_button_text = "Offer" if map_option_value('Type', mapped_fields.get('Type', [])) == "Buy Order" else "Bid"
 
@@ -951,8 +953,8 @@ def lambda_handler(event, context):
     _side_inner = ('' if hide_questions else qa_box_html) + similar_html
     side_col_html = '<div class="side-col">' + _side_inner + '</div>' if _side_inner.strip() else ''
 
-    def generate_table_html(data):
-        mid = len(data) // 2
+    def generate_table_html(data, split=None):
+        mid = len(data) // 2 if split is None else split
         left_column = data[:mid]
         right_column = data[mid:]
 
@@ -1162,7 +1164,7 @@ def lambda_handler(event, context):
 
         <div id="spvSection" style="display: {'' if map_option_value('Structure', mapped_fields.get('Structure', [])) == 'Fund' else 'none'}">
         <h2>SPV Details</h2>
-        {generate_table_html(spv_data)}
+        {generate_table_html(spv_data, spv_split)}
         </div>
             </div>
             {side_col_html}
