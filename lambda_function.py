@@ -1131,18 +1131,23 @@ def lambda_handler(event, context):
                              transition:background-color 0.15s, color 0.15s; }}
             .similar-pill:hover {{ background:#B7CBE1; }}
             .similar-note {{ margin:10px 0 0; font-size:11px; color:var(--text-secondary); }}
-            .weekly-box {{ border:1px solid var(--border-strong); border-radius:8px;
-                           padding:16px 20px; background:#faf8f3; font-size:13px;
-                           margin-top:24px; display:flex; align-items:center;
-                           gap:16px 24px; flex-wrap:wrap; }}
+            .weekly-box {{ border:none; border-radius:8px;
+                           padding:20px 24px; background:var(--accent, #3a5a75);
+                           font-size:13px; margin-top:24px; display:flex;
+                           align-items:center; gap:16px 24px; flex-wrap:wrap; }}
             .weekly-text {{ flex:1 1 300px; }}
-            .weekly-box h2 {{ margin:0 0 4px 0; font-size:15px; }}
-            .weekly-lead {{ margin:0; font-size:12.5px; color:var(--text-secondary); line-height:1.45; }}
+            .weekly-box h2 {{ margin:0 0 4px 0; font-size:16px; color:#fff; }}
+            .weekly-lead {{ margin:0; font-size:12.5px; color:rgba(255,255,255,0.85);
+                            line-height:1.45; }}
             .weekly-form {{ display:flex; gap:8px; align-items:center; flex:1 1 280px; }}
-            .weekly-form .qa-email {{ margin:0; flex:1; width:auto; }}
+            .weekly-form .qa-email {{ margin:0; flex:1; width:auto; border:none;
+                                      border-radius:6px; padding:9px 12px; }}
+            .weekly-form .qa-email:focus {{ outline:2px solid #fff; outline-offset:1px; }}
             .weekly-form .qa-send {{ margin:0; width:auto; padding:9px 18px;
-                                     white-space:nowrap; flex:none; }}
-            .weekly-note {{ margin:0; font-size:11px; color:var(--text-secondary);
+                                     white-space:nowrap; flex:none; background:#fff;
+                                     color:var(--accent, #3a5a75); }}
+            .weekly-form .qa-send:hover {{ opacity:1; background:#f0ece3; }}
+            .weekly-note {{ margin:0; font-size:11px; color:rgba(255,255,255,0.7);
                             flex-basis:100%; }}
             .weekly-hp {{ position:absolute !important; left:-9999px !important;
                           height:1px; width:1px; overflow:hidden; }}
