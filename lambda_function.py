@@ -1,4 +1,5 @@
 import json
+import html as html_mod
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -756,6 +757,27 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=Tr
         + '</aside>'
     )
 
+def render_weekly_signup(deal_id, deal_name):
+    """Quiet email-capture card at the bottom of the side column. POSTs to the
+    desk update Lambda (signup=weekly), which emails Chad — no CRM write."""
+    safe_deal_name = html_mod.escape(str(deal_name or ''), quote=True)
+    return (
+        '<div class="weekly-box">'
+        '<h2>Accredited investor?</h2>'
+        '<p class="weekly-lead">Get the weekly list of every live trade &mdash; prices, structures, and new offerings, every Monday.</p>'
+        f'<form method="POST" action="{DESK_URL}/update/">'
+        '<input type="hidden" name="signup" value="weekly">'
+        f'<input type="hidden" name="deal_id" value="{deal_id}">'
+        f'<input type="hidden" name="deal_name" value="{safe_deal_name}">'
+        '<input type="text" name="website" class="weekly-hp" tabindex="-1" autocomplete="off" aria-hidden="true">'
+        '<input type="email" name="signup_email" placeholder="Your email" required class="qa-email">'
+        '<button type="submit" class="qa-send">Get the list</button>'
+        '</form>'
+        '<p class="weekly-note">For accredited investors only. Unsubscribe anytime.</p>'
+        '</div>'
+    )
+
+
 def test_news_api(company_name, max_articles=5):
     """Fetch news articles for a given company using urllib."""
     # Construct the URL for the API call
@@ -961,7 +983,8 @@ def lambda_handler(event, context):
     _msg_raw = (deal_data.get('custom_fields') or {}).get('custom_label_4001285')
     hide_questions = (str(_msg_raw) == '7187011')
     similar_html = render_similar_companies(company_name, deal_type, deal_id)
-    _side_inner = ('' if hide_questions else qa_box_html) + similar_html
+    weekly_signup_html = render_weekly_signup(deal_id, deal_name)
+    _side_inner = ('' if hide_questions else qa_box_html) + similar_html + weekly_signup_html
     side_col_html = '<div class="side-col">' + _side_inner + '</div>' if _side_inner.strip() else ''
 
     def generate_table_html(data, split=None):
@@ -1106,6 +1129,13 @@ def lambda_handler(event, context):
                              transition:background-color 0.15s, color 0.15s; }}
             .similar-pill:hover {{ background:#B7CBE1; }}
             .similar-note {{ margin:10px 0 0; font-size:11px; color:var(--text-secondary); }}
+            .weekly-box {{ border:1px solid var(--border-strong); border-radius:8px;
+                           padding:14px 16px; background:#faf8f3; font-size:13px; }}
+            .weekly-box h2 {{ margin:0 0 6px 0; font-size:15px; }}
+            .weekly-lead {{ margin:0; font-size:12.5px; color:var(--text-secondary); line-height:1.45; }}
+            .weekly-note {{ margin:8px 0 0; font-size:11px; color:var(--text-secondary); }}
+            .weekly-hp {{ position:absolute !important; left:-9999px !important;
+                          height:1px; width:1px; overflow:hidden; }}
             .similar-count {{ font-size:10px; font-weight:600; margin-left:4px;
                               color:inherit; opacity:0.65; }}
             .qa-row {{ display:flex; align-items:flex-start; gap:8px; padding:7px 0; border-bottom:1px solid var(--border-strong); cursor:pointer; }}
