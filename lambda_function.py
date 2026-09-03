@@ -763,9 +763,11 @@ def render_weekly_signup(deal_id, deal_name):
     safe_deal_name = html_mod.escape(str(deal_name or ''), quote=True)
     return (
         '<div class="weekly-box">'
+        '<div class="weekly-text">'
         '<h2>Accredited investor?</h2>'
         '<p class="weekly-lead">Get the weekly list of every live trade &mdash; prices, structures, and new offerings, every Monday.</p>'
-        f'<form method="POST" action="{DESK_URL}/update/">'
+        '</div>'
+        f'<form method="POST" action="{DESK_URL}/update/" class="weekly-form">'
         '<input type="hidden" name="signup" value="weekly">'
         f'<input type="hidden" name="deal_id" value="{deal_id}">'
         f'<input type="hidden" name="deal_name" value="{safe_deal_name}">'
@@ -984,7 +986,7 @@ def lambda_handler(event, context):
     hide_questions = (str(_msg_raw) == '7187011')
     similar_html = render_similar_companies(company_name, deal_type, deal_id)
     weekly_signup_html = render_weekly_signup(deal_id, deal_name)
-    _side_inner = ('' if hide_questions else qa_box_html) + similar_html + weekly_signup_html
+    _side_inner = ('' if hide_questions else qa_box_html) + similar_html
     side_col_html = '<div class="side-col">' + _side_inner + '</div>' if _side_inner.strip() else ''
 
     def generate_table_html(data, split=None):
@@ -1130,10 +1132,18 @@ def lambda_handler(event, context):
             .similar-pill:hover {{ background:#B7CBE1; }}
             .similar-note {{ margin:10px 0 0; font-size:11px; color:var(--text-secondary); }}
             .weekly-box {{ border:1px solid var(--border-strong); border-radius:8px;
-                           padding:14px 16px; background:#faf8f3; font-size:13px; }}
-            .weekly-box h2 {{ margin:0 0 6px 0; font-size:15px; }}
+                           padding:16px 20px; background:#faf8f3; font-size:13px;
+                           margin-top:24px; display:flex; align-items:center;
+                           gap:16px 24px; flex-wrap:wrap; }}
+            .weekly-text {{ flex:1 1 300px; }}
+            .weekly-box h2 {{ margin:0 0 4px 0; font-size:15px; }}
             .weekly-lead {{ margin:0; font-size:12.5px; color:var(--text-secondary); line-height:1.45; }}
-            .weekly-note {{ margin:8px 0 0; font-size:11px; color:var(--text-secondary); }}
+            .weekly-form {{ display:flex; gap:8px; align-items:center; flex:1 1 280px; }}
+            .weekly-form .qa-email {{ margin:0; flex:1; width:auto; }}
+            .weekly-form .qa-send {{ margin:0; width:auto; padding:9px 18px;
+                                     white-space:nowrap; flex:none; }}
+            .weekly-note {{ margin:0; font-size:11px; color:var(--text-secondary);
+                            flex-basis:100%; }}
             .weekly-hp {{ position:absolute !important; left:-9999px !important;
                           height:1px; width:1px; overflow:hidden; }}
             .similar-count {{ font-size:10px; font-weight:600; margin-left:4px;
@@ -1207,6 +1217,7 @@ def lambda_handler(event, context):
         <h2>SPV Details</h2>
         {generate_table_html(spv_data, spv_split)}
         </div>
+{weekly_signup_html}
             </div>
             {side_col_html}
         </div>
