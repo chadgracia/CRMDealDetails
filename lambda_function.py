@@ -1223,12 +1223,12 @@ def lambda_handler(event, context):
         {generate_table_html(spv_data, spv_split)}
         </div>
 {weekly_signup_html}
-            </div>
-            {side_col_html}
-        </div>
         <!-- News Section -->
         <div id="newsSection" class="news-section">
             {news_html}
+        </div>
+            </div>
+            {side_col_html}
         </div>
         <hr>
         <div id="disclaimer">
