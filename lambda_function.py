@@ -736,6 +736,7 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=Tr
                 f'<label>One-time<input type="text" inputmode="decimal" name="fee_onetime" value="{sf}"></label>'
                 f'<label>Man<input type="text" inputmode="decimal" name="fee_man" value="{mf}"></label>'
                 f'<label>Carry<input type="text" inputmode="decimal" name="fee_carry" value="{cr}"></label>'
+                '<label>Ticket $<input type="number" name="fee_ticket" step="any" placeholder="e.g. 1000000"></label>'
                 '</div>'
             )
 
