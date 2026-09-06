@@ -901,16 +901,32 @@ def lambda_handler(event, context):
     gross_with_valuation = format_price_with_comparison(gross_price, gross_valuation, gross_comparison)
     net_with_valuation = format_price_with_comparison(net_price, net_valuation, net_comparison)
 
-    # Direct-transfer Sell Order with no Net and no Gross at all -> solicit bids
+    # Empty/zero price handling: zero counts as no price. Sell orders with no
+    # net and no gross solicit a bid; buy orders solicit an offer; any other
+    # empty/zero price cell renders as a dash.
     _sol_type = map_option_value('Type', mapped_fields.get('Type', []))
-    _sol_struct = mapped_fields.get('Structure', [])
-    if not isinstance(_sol_struct, (list, tuple)):
-        _sol_struct = [_sol_struct]
-    _sol_direct = '6250090' in [str(x) for x in _sol_struct]
-    _sol_empty = lambda v: v is None or str(v).strip() in ('', 'None')
-    if _sol_type == "Sell Order" and _sol_direct and _sol_empty(gross_price) and _sol_empty(net_price):
-        gross_with_valuation = "Soliciting Bids: Click Above"
-        net_with_valuation = ""
+    def _price_empty(v):
+        if v is None or str(v).strip() in ('', 'None'):
+            return True
+        try:
+            return float(v) == 0
+        except (ValueError, TypeError):
+            return False
+    if _price_empty(gross_price) and _price_empty(net_price):
+        if _sol_type == "Sell Order":
+            gross_with_valuation = "Make a bid"
+            net_with_valuation = "-"
+        elif _sol_type == "Buy Order":
+            net_with_valuation = "Make an offer"
+            gross_with_valuation = "-"
+        else:
+            gross_with_valuation = "-"
+            net_with_valuation = "-"
+    else:
+        if _price_empty(gross_price):
+            gross_with_valuation = "-"
+        if _price_empty(net_price):
+            net_with_valuation = "-"
 
     # Get company summary separately
     company_summary = company_data.get('description', '')
