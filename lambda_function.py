@@ -1236,9 +1236,9 @@ def lambda_handler(event, context):
 {generate_table_html(table_data)}
 
         <div id="spvSection" style="display: {'' if map_option_value('Structure', mapped_fields.get('Structure', [])) == 'Fund' else 'none'}">
-        <h2>SPV Details</h2>
+        <h2>SPV Details&thinsp;*</h2>
         {generate_table_html(spv_data, spv_split)}
-        <p style="font-size:12.5px;color:#8a8a8a;margin:6px 0 0 2px;font-style:italic">Fees shown are the seller&rsquo;s SPV terms only and do not include Gracia Group&rsquo;s commission, which is quoted separately.</p>
+        <p style="font-size:13.5px;color:#555;margin:10px 0 0 2px;font-style:italic">* Fees shown are the seller&rsquo;s SPV terms only and do not include broker commission, which is quoted separately.</p>
         </div>
 {weekly_signup_html}
         <!-- News Section -->
