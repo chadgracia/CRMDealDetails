@@ -912,8 +912,15 @@ def lambda_handler(event, context):
             return float(v) == 0
         except (ValueError, TypeError):
             return False
+    try:
+        _sol_seller_gp = int(float(str(mapped_fields.get('Seller Type', '') or 0))) == 7020357
+    except (ValueError, TypeError):
+        _sol_seller_gp = False
     if _price_empty(gross_price) and _price_empty(net_price):
-        if _sol_type == "Sell Order":
+        if _sol_type == "Sell Order" and _sol_seller_gp:
+            net_with_valuation = "Price tied to upcoming round"
+            gross_with_valuation = "-"
+        elif _sol_type == "Sell Order":
             gross_with_valuation = "Make a bid"
             net_with_valuation = "-"
         elif _sol_type == "Buy Order":
