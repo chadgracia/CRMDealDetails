@@ -4,6 +4,11 @@ import urllib.request
 import urllib.error
 import urllib.parse
 import logging
+import os
+import time
+import base64
+import hmac
+import hashlib
 from datetime import datetime, timedelta  # NEW: Import for date handling
 
 API_KEY = "defe67185ffd4993874558be8c4eb29b"  # Your actual NewsAPI key
@@ -56,6 +61,93 @@ JWT_TOKEN = get_jwt_from_s3()
 # Client-facing links go through CloudFront, which routes on path prefix —
 # keep the trailing slash on any path appended to this.
 DESK_URL = "https://desk.graciagroup.com"
+
+# --- "My Dashboard" button (additive, copied from chadgracia/trades) -----
+IDENTITY_SECRET = os.environ.get("IDENTITY_SECRET", "")
+SYNDICATE_DASH_URL = "https://ws4stw4iul75a7yx5dra2wmnq40kipav.lambda-url.us-east-1.on.aws"
+SYNDICATE_TENANTS_URL = f"{SYNDICATE_DASH_URL}/?key=JK8h5Pq2L9aZ7rT3mN6bX&tenants=list"
+_syndicate_tenant_cache = {"emails": None}
+
+
+def _get_cookie(event, name):
+    """Read a cookie value from a payload-v2 request, else None."""
+    for c in (event.get("cookies") or []):
+        if c.startswith(name + "="):
+            return c.split("=", 1)[1]
+    hdr = (event.get("headers") or {}).get("cookie", "")
+    for c in hdr.split(";"):
+        c = c.strip()
+        if c.startswith(name + "="):
+            return c.split("=", 1)[1]
+    return None
+
+
+def _read_identity_email(event):
+    """Verified email from the gg_id cookie, or None. Never raises."""
+    if not IDENTITY_SECRET:
+        return None
+    raw = _get_cookie(event, "gg_id")
+    if not raw:
+        return None
+    try:
+        decoded = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)).decode()
+        email, sig = decoded.rsplit("|", 1)
+        expected = hmac.new(IDENTITY_SECRET.encode(), email.encode(),
+                            hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, sig):
+            return None
+        return email
+    except Exception:
+        return None
+
+
+def _make_handoff_token(email):
+    """Short-lived signed handoff the syndicate dashboard verifies:
+    base64url(f"{email}|{exp}|{sig}"), sig = HMAC-SHA256(IDENTITY_SECRET, f"{email}|{exp}")."""
+    exp = int(time.time()) + 3600
+    sig = hmac.new(IDENTITY_SECRET.encode(), f"{email}|{exp}".encode(),
+                   hashlib.sha256).hexdigest()
+    return base64.urlsafe_b64encode(f"{email}|{exp}|{sig}".encode()).decode().rstrip("=")
+
+
+def _syndicate_eligible_emails():
+    """Lowercased emails eligible for the Syndicate Dashboard, fetched once per
+    warm container from syndicate-dash's admin-gated ?tenants=list route. Short
+    timeout, fail-soft: any error caches an empty set so the button just renders
+    nothing rather than erroring or retrying every request."""
+    if _syndicate_tenant_cache["emails"] is not None:
+        return _syndicate_tenant_cache["emails"]
+    emails = set()
+    try:
+        req = urllib.request.Request(SYNDICATE_TENANTS_URL)
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode())
+        emails = {(t.get("email") or "").strip().lower()
+                  for t in (data.get("tenants") or []) if t.get("email")}
+    except Exception as e:
+        logger.warning(f"Syndicate tenants fetch failed (non-fatal): {e}")
+    _syndicate_tenant_cache["emails"] = emails
+    return emails
+
+
+def _my_dashboard_button_html(event):
+    """'My Dashboard' link, additive: '' unless the signed-in user's gg_id
+    email is on the Syndicate Dashboard's eligible-tenant list, in which case
+    it's a signed handoff-token SSO link. Any failure (identity, fetch, or
+    token) renders '' and leaves the page exactly as today."""
+    try:
+        email = _read_identity_email(event)
+        if not email or email.strip().lower() not in _syndicate_eligible_emails():
+            return ""
+        token = _make_handoff_token(email)
+        href = f"{SYNDICATE_DASH_URL}/?sso={urllib.parse.quote(token, safe='')}"
+        return (
+            f'<a href="{href}" target="_blank" rel="noopener" class="btn" '
+            'style="background:var(--accent,#3d5a73);border-color:var(--accent,#3d5a73);">My Dashboard</a>'
+        )
+    except Exception as e:
+        logger.warning(f"My Dashboard button failed (non-fatal): {e}")
+        return ""
 
 # --- Explore Similar Companies -------------------------------------------
 SIMILAR_TRADES_BASE = "https://trades.graciagroup.com/"
@@ -821,6 +913,8 @@ def lambda_handler(event, context):
     
     logger.info(f"Extracted deal_id: {deal_id}")
 
+    my_dashboard_btn = _my_dashboard_button_html(event)
+
     deal_data = fetch_deal_data(deal_id)
     
     if not deal_data:
@@ -1232,7 +1326,8 @@ def lambda_handler(event, context):
             </div>
             <div class="button-group">
                 <a href="{DESK_URL}/bid/?name={urllib.parse.quote(company_name)}&side={'sell' if bid_button_text == 'Offer' else 'buy'}&deal_id={deal_id}{f'&px={urllib.parse.quote(str(gross_price))}' if gross_price else ''}" class="btn bid-btn">{bid_button_text}</a>
-                <a href="https://trades.graciagroup.com/" class="btn">Full Books</a>            
+                <a href="https://trades.graciagroup.com/" class="btn">Full Books</a>
+                {my_dashboard_btn}
             </div>
         </div>
         <div class="company-summary">{company_summary}</div>
