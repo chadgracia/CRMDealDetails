@@ -149,6 +149,45 @@ def _my_dashboard_button_html(event):
         logger.warning(f"My Dashboard button failed (non-fatal): {e}")
         return ""
 
+
+# --- Bid/Offer auction routing --------------------------------------------
+# Mirrors portfolio-deploy's own auctions.json read + open/closed rule, so
+# the Bid button can send a buyer straight to a live auction instead of
+# web-bid. Any read/parse failure here must fall back to web-bid, never a
+# broken page.
+AUCTIONS_BUCKET = "full-pipeline-cache"
+AUCTIONS_KEY = "auctions.json"
+
+
+def _load_auctions():
+    try:
+        s3 = boto3.client('s3')
+        obj = s3.get_object(Bucket=AUCTIONS_BUCKET, Key=AUCTIONS_KEY)
+        data = json.loads(obj['Body'].read())
+        return data.get('auctions') or {}
+    except Exception as e:
+        logger.warning(f"auctions.json load failed (non-fatal): {e}")
+        return {}
+
+
+def live_auction_for_deal(deal_id):
+    """The id of the open auction seeded from this deal, or None. Open means
+    no close_date, or a close_date of today or later (portfolio-deploy's
+    own rule); deal ids are compared as str() on both sides."""
+    try:
+        today = datetime.now().strftime('%Y-%m-%d')
+        for aid, auc in (_load_auctions() or {}).items():
+            if str(auc.get('deal_id') or '') != str(deal_id):
+                continue
+            close_date = (auc.get('close_date') or '').strip()
+            if not close_date or close_date >= today:
+                return aid
+        return None
+    except Exception as e:
+        logger.warning(f"live_auction_for_deal failed (non-fatal): {e}")
+        return None
+
+
 # --- Explore Similar Companies -------------------------------------------
 SIMILAR_TRADES_BASE = "https://trades.graciagroup.com/"
 SIMILAR_MAX_PILLS = 12
@@ -1095,6 +1134,57 @@ def lambda_handler(event, context):
     
     bid_button_text = "Offer" if map_option_value('Type', mapped_fields.get('Type', [])) == "Buy Order" else "Bid"
 
+    # Bid/Offer destination: a live auction seeded from this deal wins over
+    # web-bid. Any auctions.json read failure falls back to web-bid (see
+    # live_auction_for_deal), so the page never breaks on this.
+    _bid_side = 'sell' if bid_button_text == 'Offer' else 'buy'
+    _web_bid_dest = (
+        f"{DESK_URL}/bid/?name={urllib.parse.quote(company_name)}&side={_bid_side}"
+        f"&deal_id={deal_id}"
+        + (f"&px={urllib.parse.quote(str(gross_price))}" if gross_price else "")
+    )
+    _live_auction_id = live_auction_for_deal(deal_id)
+    bid_dest = (f"{DESK_URL}/?view=auction&id={urllib.parse.quote(str(_live_auction_id))}"
+                if _live_auction_id else _web_bid_dest)
+
+    # Login-gated: a signed-in viewer (gg_id cookie) goes straight to bid_dest
+    # with a fresh SSO handoff token. A signed-out viewer gets a modal whose
+    # Sign In button round-trips through Cognito with bid_dest (no token) as
+    # the bare `state` payload, then trades' code-exchange leg re-mints the
+    # token and bounces back here to bid_dest itself.
+    _bid_email = _read_identity_email(event)
+    bid_modal_html = ""
+    if _bid_email:
+        _bid_token = _make_handoff_token(_bid_email)
+        _bid_sep = '&' if '?' in bid_dest else '?'
+        bid_href = f"{bid_dest}{_bid_sep}sso={urllib.parse.quote(_bid_token, safe='')}"
+        bid_button_html = f'<a href="{bid_href}" class="btn bid-btn">{bid_button_text}</a>'
+    else:
+        _bid_state = base64.urlsafe_b64encode(bid_dest.encode()).decode().rstrip('=')
+        _bid_cognito_url = (
+            "https://us-east-1dsttcaqx7.auth.us-east-1.amazoncognito.com/login"
+            "?client_id=71vrglkidm13jb73u7nje3d1t2&response_type=code&scope=openid+email"
+            "&redirect_uri=https://trades.graciagroup.com"
+            f"&state={urllib.parse.quote(_bid_state, safe='')}"
+        )
+        bid_button_html = (
+            '<a href="#" class="btn bid-btn" '
+            "onclick=\"document.getElementById('bidLoginModal').style.display='flex';return false;\">"
+            f'{bid_button_text}</a>'
+        )
+        bid_modal_html = (
+            '<div id="bidLoginModal" class="bid-modal-overlay">'
+            '<div class="bid-modal">'
+            '<h3>Sign in to place your bid</h3>'
+            "<p>We&rsquo;ll bring you right back to the bidding page.</p>"
+            '<div class="bid-modal-actions">'
+            f'<a href="{_bid_cognito_url}" class="btn bid-btn">Sign In</a>'
+            '<a href="#" class="bid-modal-cancel" '
+            "onclick=\"document.getElementById('bidLoginModal').style.display='none';return false;\">"
+            'Cancel</a>'
+            '</div></div></div>'
+        )
+
     deal_type = map_option_value('Type', mapped_fields.get('Type', []))
     owner_iqf_yes = False
     if deal_type == "Buy Order":
@@ -1301,6 +1391,42 @@ def lambda_handler(event, context):
             .bid-btn:hover {{
                 background-color: #345f48;
             }}
+            .bid-modal-overlay {{
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, 0.45);
+                align-items: center;
+                justify-content: center;
+                z-index: 1000;
+            }}
+            .bid-modal {{
+                background: #fff;
+                border-radius: 8px;
+                padding: 24px 28px;
+                max-width: 360px;
+                width: 90%;
+                box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+            }}
+            .bid-modal h3 {{
+                margin: 0 0 10px;
+                color: var(--text);
+            }}
+            .bid-modal p {{
+                margin: 0 0 18px;
+                color: var(--text-secondary);
+                font-size: 14px;
+            }}
+            .bid-modal-actions {{
+                display: flex;
+                align-items: center;
+                gap: 16px;
+            }}
+            .bid-modal-cancel {{
+                color: var(--text-secondary);
+                font-size: 14px;
+                text-decoration: underline;
+            }}
         </style>
     </head>
     <body>
@@ -1325,11 +1451,12 @@ def lambda_handler(event, context):
                      onerror="console.log('Logo failed to load: ' + this.src); this.src='https://bannerlogos.s3.us-east-1.amazonaws.com/default.png';">
             </div>
             <div class="button-group">
-                <a href="{DESK_URL}/bid/?name={urllib.parse.quote(company_name)}&side={'sell' if bid_button_text == 'Offer' else 'buy'}&deal_id={deal_id}{f'&px={urllib.parse.quote(str(gross_price))}' if gross_price else ''}" class="btn bid-btn">{bid_button_text}</a>
+                {bid_button_html}
                 <a href="https://trades.graciagroup.com/" class="btn">Full Books</a>
                 {my_dashboard_btn}
             </div>
         </div>
+        {bid_modal_html}
         <div class="company-summary">{company_summary}</div>
         {catalyst_html}
 
