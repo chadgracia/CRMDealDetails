@@ -1376,6 +1376,11 @@ def lambda_handler(event, context):
                 flex: 1;
             }}
             .nav-tab {{
+                display: inline-block;
+                background-color: #fff;
+                border: 1px solid var(--border-strong);
+                border-radius: 999px;
+                padding: 8px 16px;
                 font-size: 14px;
                 font-weight: 600;
                 color: var(--text);
@@ -1383,32 +1388,47 @@ def lambda_handler(event, context):
                 white-space: nowrap;
             }}
             .nav-tab:hover {{
-                color: var(--accent);
+                background-color: #f0f0f0;
             }}
             .nav-tab-disabled {{
                 color: var(--text-secondary);
                 cursor: default;
             }}
             .nav-tab-disabled:hover {{
-                color: var(--text-secondary);
+                background-color: #fff;
             }}
             .nav-signin {{
-                background-color: var(--accent);
-                color: #fff;
-                padding: 8px 18px;
+                background-color: #fff;
+                color: var(--text);
+                border: 1px solid var(--border-strong);
+                border-radius: 999px;
+                padding: 8px 16px;
                 font-size: 14px;
+                font-weight: 600;
+                white-space: nowrap;
                 margin-left: auto;
+            }}
+            .nav-signin:hover {{
+                background-color: #f0f0f0;
             }}
             .navacct {{
                 position: relative;
                 margin-left: auto;
             }}
             .navacct-trigger {{
+                display: inline-block;
+                background-color: #fff;
+                border: 1px solid var(--border-strong);
+                border-radius: 999px;
+                padding: 8px 16px;
                 font-size: 14px;
                 font-weight: 600;
                 color: var(--text);
                 cursor: pointer;
                 white-space: nowrap;
+            }}
+            .navacct-trigger:hover {{
+                background-color: #f0f0f0;
             }}
             .navacct-menu {{
                 display: none;
