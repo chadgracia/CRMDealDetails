@@ -1161,12 +1161,14 @@ def lambda_handler(event, context):
         bid_button_html = f'<a href="{bid_href}" class="btn bid-btn">{bid_button_text}</a>'
     else:
         _bid_state = base64.urlsafe_b64encode(bid_dest.encode()).decode().rstrip('=')
-        _bid_cognito_url = (
-            "https://us-east-1dsttcaqx7.auth.us-east-1.amazoncognito.com/login"
+        _bid_cognito_host = "https://us-east-1dsttcaqx7.auth.us-east-1.amazoncognito.com"
+        _bid_cognito_qs = (
             "?client_id=71vrglkidm13jb73u7nje3d1t2&response_type=code&scope=openid+email"
             "&redirect_uri=https://trades.graciagroup.com"
             f"&state={urllib.parse.quote(_bid_state, safe='')}"
         )
+        _bid_cognito_url = f"{_bid_cognito_host}/login{_bid_cognito_qs}"
+        _bid_signup_url = f"{_bid_cognito_host}/signup{_bid_cognito_qs}"
         bid_button_html = (
             '<a href="#" class="btn bid-btn" '
             "onclick=\"document.getElementById('bidLoginModal').style.display='flex';return false;\">"
@@ -1179,7 +1181,10 @@ def lambda_handler(event, context):
             "<p>We&rsquo;ll bring you right back to the bidding page.</p>"
             '<div class="bid-modal-actions">'
             f'<a href="{_bid_cognito_url}" class="btn bid-btn">Sign In</a>'
-            '<a href="#" class="bid-modal-cancel" '
+            + (f'<div class="bid-modal-signup">First time here? '
+               f'<a href="{_bid_signup_url}">Create an account</a> '
+               '&mdash; use the email where you receive our deal updates.</div>')
+            + '<a href="#" class="bid-modal-cancel" '
             "onclick=\"document.getElementById('bidLoginModal').style.display='none';return false;\">"
             'Cancel</a>'
             '</div></div></div>'
@@ -1420,7 +1425,17 @@ def lambda_handler(event, context):
             .bid-modal-actions {{
                 display: flex;
                 align-items: center;
+                flex-wrap: wrap;
                 gap: 16px;
+            }}
+            .bid-modal-signup {{
+                flex-basis: 100%;
+                margin-top: 10px;
+                font-size: 13px;
+                color: var(--text-secondary);
+            }}
+            .bid-modal-signup a {{
+                color: var(--accent);
             }}
             .bid-modal-cancel {{
                 color: var(--text-secondary);
