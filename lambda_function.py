@@ -1237,8 +1237,8 @@ def lambda_handler(event, context):
                 _carry_val = float(str(mapped_fields.get('Carry', '')).replace('%', '').strip())
             except ValueError:
                 _carry_val = None
-            _fe_label = ('3(c)(1) - Accredited Investors &amp; QPs' if _carry_val == 0
-                         else '3(c)(1) - Qualified Clients &amp; QPs')
+            _fe_label = ('3(c)(1) - Accredited Investors ($1M+ net worth) &amp; Qualified Purchasers ($5M+ investments)' if _carry_val == 0
+                         else '3(c)(1) - Qualified Clients ($2.2M+ net worth) &amp; Qualified Purchasers ($5M+ investments)')
         spv_details.append(("Fund Exemption", _fe_label))
     _final_deadline = ((deal_data.get('custom_fields') or {}).get('custom_label_4006402') or '')
     if _final_deadline:
