@@ -37,7 +37,7 @@ QUESTION_CATALOG_SELLER = [  # shown on BUY orders (a seller asking about the bu
     {"id": "accept_bid",   "q": "Would you bid $___/share (gross)?",            "field": None},
     {"id": "deadline",     "q": "When is the deadline to commit?",              "field": None},
     {"id": "cash_on_hand", "q": "Do you have cash on hand?",                    "field": None},
-    {"id": "qp_accredited","q": "Are you a QP or accredited?",                  "field": None},
+    {"id": "qp_accredited","q": "What is your investor qualification level?",   "field": None},
     {"id": "iqf_done",     "q": "Have you completed the IQF with Rainmaker?",   "field": None},
     {"id": "on_cap_table", "q": "Are you already on the cap table?",            "field": None},
     {"id": "no_data_room", "q": "Do you need access to a data room to commit?", "field": None},
@@ -1228,7 +1228,18 @@ def lambda_handler(event, context):
         ("Data Room / VDR Available", data_room_display)
     ]
     if mapped_fields.get('Fund Exemption'):
-        spv_details.append(("Fund Exemption", map_option_value('Fund Exemption', mapped_fields.get('Fund Exemption', ''))))
+        _fe_raw = str(mapped_fields.get('Fund Exemption', ''))
+        _fe_label = map_option_value('Fund Exemption', _fe_raw)
+        if _fe_raw == '7200027':
+            # 3(c)(1): if the SPV charges carry, Rule 205-3 requires Qualified
+            # Clients. Blank/unparseable carry defaults to the stricter label.
+            try:
+                _carry_val = float(str(mapped_fields.get('Carry', '')).replace('%', '').strip())
+            except ValueError:
+                _carry_val = None
+            _fe_label = ('3(c)(1) - Accredited Investors &amp; QPs' if _carry_val == 0
+                         else '3(c)(1) - Qualified Clients &amp; QPs')
+        spv_details.append(("Fund Exemption", _fe_label))
     _final_deadline = ((deal_data.get('custom_fields') or {}).get('custom_label_4006402') or '')
     if _final_deadline:
         spv_details.insert(0, ("Deadline", str(_final_deadline)[:10].replace('/', '-')))
