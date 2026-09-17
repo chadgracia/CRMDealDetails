@@ -70,15 +70,24 @@ _syndicate_tenant_cache = {"emails": None}
 
 
 def _get_cookie(event, name):
-    """Read a cookie value from a payload-v2 request, else None."""
+    """Read a cookie value from any Lambda event shape, else None."""
     for c in (event.get("cookies") or []):
         if c.startswith(name + "="):
             return c.split("=", 1)[1]
-    hdr = (event.get("headers") or {}).get("cookie", "")
-    for c in hdr.split(";"):
-        c = c.strip()
-        if c.startswith(name + "="):
-            return c.split("=", 1)[1]
+
+    raw_values = []
+    for key, value in (event.get("headers") or {}).items():
+        if key.lower() == "cookie":
+            raw_values.append(value)
+    for key, values in (event.get("multiValueHeaders") or {}).items():
+        if key.lower() == "cookie":
+            raw_values.extend(values)
+
+    for raw in raw_values:
+        for c in raw.split(";"):
+            c = c.strip()
+            if c.startswith(name + "="):
+                return c.split("=", 1)[1]
     return None
 
 
