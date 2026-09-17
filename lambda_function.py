@@ -1260,6 +1260,8 @@ def lambda_handler(event, context):
     _live_auction_id = live_auction_for_deal(deal_id)
     bid_dest = (f"{DESK_URL}/?view=auction&id={urllib.parse.quote(str(_live_auction_id))}"
                 if _live_auction_id else _web_bid_dest)
+    if _live_auction_id:
+        bid_button_text = "Bid — Auction in Progress"
 
     # Login-gated: a signed-in viewer (gg_id cookie) goes straight to bid_dest
     # with a fresh SSO handoff token. A signed-out viewer gets a modal whose
