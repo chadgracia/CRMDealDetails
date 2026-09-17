@@ -785,7 +785,7 @@ def map_option_value(field, value):
         },
         'Fund Exemption': {
             '7200027': '3(c)(1) - Accredited Investors &amp; QPs',
-            '7200028': '3(c)(7) - Qualified Purchasers only'
+            '7200028': '3(c)(7) - Qualified Purchasers only ($5M+ investments)'
         },
         'Class': {
             '5077831': 'Common',
