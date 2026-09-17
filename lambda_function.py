@@ -130,26 +130,6 @@ def _syndicate_eligible_emails():
     return emails
 
 
-def _my_dashboard_button_html(event):
-    """'My Dashboard' link, additive: '' unless the signed-in user's gg_id
-    email is on the Syndicate Dashboard's eligible-tenant list, in which case
-    it's a signed handoff-token SSO link. Any failure (identity, fetch, or
-    token) renders '' and leaves the page exactly as today."""
-    try:
-        email = _read_identity_email(event)
-        if not email or email.strip().lower() not in _syndicate_eligible_emails():
-            return ""
-        token = _make_handoff_token(email)
-        href = f"{SYNDICATE_DASH_URL}/?sso={urllib.parse.quote(token, safe='')}"
-        return (
-            f'<a href="{href}" target="_blank" rel="noopener" class="btn" '
-            'style="background:var(--accent,#3d5a73);border-color:var(--accent,#3d5a73);">My Dashboard</a>'
-        )
-    except Exception as e:
-        logger.warning(f"My Dashboard button failed (non-fatal): {e}")
-        return ""
-
-
 # --- Bid/Offer auction routing --------------------------------------------
 # Mirrors portfolio-deploy's own auctions.json read + open/closed rule, so
 # the Bid button can send a buyer straight to a live auction instead of
@@ -186,6 +166,120 @@ def live_auction_for_deal(deal_id):
     except Exception as e:
         logger.warning(f"live_auction_for_deal failed (non-fatal): {e}")
         return None
+
+
+def _live_auctions_for_nav():
+    """[(auction_id, auction_dict), ...] for every open auction, filtered
+    from the same auctions.json this file already loads for the Bid button
+    (_load_auctions) -- no separate S3 read. Any failure returns [] so the
+    nav's Auctions tab just doesn't render rather than breaking the page."""
+    try:
+        today = datetime.now().strftime('%Y-%m-%d')
+        live = []
+        for aid, auc in (_load_auctions() or {}).items():
+            close_date = (auc.get('close_date') or '').strip()
+            if not close_date or close_date >= today:
+                live.append((aid, auc))
+        return live
+    except Exception as e:
+        logger.warning(f"Auctions nav tab failed (non-fatal): {e}")
+        return []
+
+
+def _nav_login_url(dest):
+    """Cognito hosted-UI login URL carrying `dest` (bare, no token) as
+    base64url state; trades' code-exchange leg appends a fresh sso token
+    once the visitor signs in. Kept separate from the Bid modal's own
+    login/signup URL builder so that code is left exactly as it is."""
+    state = base64.urlsafe_b64encode(dest.encode()).decode().rstrip('=')
+    return (
+        "https://us-east-1dsttcaqx7.auth.us-east-1.amazoncognito.com/login"
+        "?client_id=71vrglkidm13jb73u7nje3d1t2&response_type=code&scope=openid+email"
+        "&redirect_uri=https://trades.graciagroup.com"
+        f"&state={urllib.parse.quote(state, safe='')}"
+    )
+
+
+def _render_top_nav(event):
+    """The shared client-facing top nav (identical header in chadgracia/trades):
+    brand, tabs (Indications, Portfolio & Watchlist, two placeholder tabs,
+    Auctions when at least one is live, My Dashboard for eligible tenants),
+    and the account control on the right. Any failure building an optional
+    tab must not break the rest of the nav or the page."""
+    email = _read_identity_email(event)
+
+    if email:
+        pw_token = _make_handoff_token(email)
+        portfolio_href = f"{DESK_URL}/?sso={urllib.parse.quote(pw_token, safe='')}"
+    else:
+        portfolio_href = _nav_login_url(DESK_URL + "/")
+
+    auctions_tab = ""
+    try:
+        live = _live_auctions_for_nav()
+        if live:
+            first_aid = live[0][0]
+            auc_dest = f"{DESK_URL}/?view=auction&id={urllib.parse.quote(str(first_aid))}"
+            if email:
+                auc_token = _make_handoff_token(email)
+                auc_sep = '&' if '?' in auc_dest else '?'
+                auc_href = f"{auc_dest}{auc_sep}sso={urllib.parse.quote(auc_token, safe='')}"
+            else:
+                auc_href = _nav_login_url(auc_dest)
+            auctions_tab = (
+                f'<a href="{auc_href}" target="_blank" rel="noopener" class="nav-tab">'
+                f'Auctions ({len(live)})</a>'
+            )
+    except Exception as e:
+        logger.warning(f"Auctions nav tab failed (non-fatal): {e}")
+        auctions_tab = ""
+
+    dashboard_tab = ""
+    try:
+        if email and email.strip().lower() in _syndicate_eligible_emails():
+            dash_token = _make_handoff_token(email)
+            dash_href = f"{SYNDICATE_DASH_URL}/?sso={urllib.parse.quote(dash_token, safe='')}"
+            dashboard_tab = f'<a href="{dash_href}" target="_blank" rel="noopener" class="nav-tab">My Dashboard</a>'
+    except Exception as e:
+        logger.warning(f"My Dashboard nav tab failed (non-fatal): {e}")
+        dashboard_tab = ""
+
+    if email:
+        safe_email = html_mod.escape(email, quote=True)
+        account_html = (
+            '<div class="navacct" tabindex="0">'
+            '<span class="navacct-trigger">My Account &#9662;</span>'
+            '<div class="navacct-menu">'
+            f'<div class="navacct-item navacct-static">Signed in as {safe_email}</div>'
+            '<div class="navacct-item navacct-disabled" title="Coming soon">Profile &mdash; coming soon</div>'
+            '<a class="navacct-item" href="https://trades.graciagroup.com/?signout=1">Sign out</a>'
+            '</div></div>'
+        )
+    else:
+        cur_path = (event.get('rawPath')
+                    or (event.get('requestContext') or {}).get('http', {}).get('path')
+                    or event.get('path') or '/')
+        cur_qs = event.get('rawQueryString')
+        if cur_qs is None:
+            _qsp = event.get('queryStringParameters') or {}
+            cur_qs = urllib.parse.urlencode(_qsp) if _qsp else ''
+        cur_url = DESK_URL + cur_path + (('?' + cur_qs) if cur_qs else '')
+        account_html = f'<a href="{_nav_login_url(cur_url)}" class="btn nav-signin">Sign In</a>'
+
+    return (
+        '<nav class="topnav">'
+        '<a href="https://trades.graciagroup.com/" class="nav-brand">Gracia Group</a>'
+        '<div class="nav-tabs">'
+        '<a href="https://trades.graciagroup.com/" class="nav-tab">Indications</a>'
+        f'<a href="{portfolio_href}" target="_blank" rel="noopener" class="nav-tab">Portfolio &amp; Watchlist</a>'
+        '<span class="nav-tab nav-tab-disabled" title="Coming soon">Introductions</span>'
+        '<span class="nav-tab nav-tab-disabled" title="Coming soon">Demand Board</span>'
+        + auctions_tab
+        + dashboard_tab
+        + '</div>'
+        + account_html
+        + '</nav>'
+    )
 
 
 # --- Explore Similar Companies -------------------------------------------
@@ -952,7 +1046,7 @@ def lambda_handler(event, context):
     
     logger.info(f"Extracted deal_id: {deal_id}")
 
-    my_dashboard_btn = _my_dashboard_button_html(event)
+    top_nav_html = _render_top_nav(event)
 
     deal_data = fetch_deal_data(deal_id)
     
@@ -1249,6 +1343,106 @@ def lambda_handler(event, context):
             /* Page-specific layout only. The shared Gracia look (font stack,
                page container, header, buttons, tables, news list, disclaimer)
                comes from master.css. */
+            .topnav {{
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 16px;
+                padding: 10px 0;
+                margin-bottom: 14px;
+                border-bottom: 1px solid var(--border-strong);
+            }}
+            .nav-brand {{
+                font-weight: 700;
+                font-size: 17px;
+                color: var(--text);
+                text-decoration: none;
+                white-space: nowrap;
+            }}
+            .nav-tabs {{
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 18px;
+                flex: 1;
+            }}
+            .nav-tab {{
+                font-size: 14px;
+                font-weight: 600;
+                color: var(--text);
+                text-decoration: none;
+                white-space: nowrap;
+            }}
+            .nav-tab:hover {{
+                color: var(--accent);
+            }}
+            .nav-tab-disabled {{
+                color: var(--text-secondary);
+                cursor: default;
+            }}
+            .nav-tab-disabled:hover {{
+                color: var(--text-secondary);
+            }}
+            .nav-signin {{
+                background-color: var(--accent);
+                color: #fff;
+                padding: 8px 18px;
+                font-size: 14px;
+                margin-left: auto;
+            }}
+            .navacct {{
+                position: relative;
+                margin-left: auto;
+            }}
+            .navacct-trigger {{
+                font-size: 14px;
+                font-weight: 600;
+                color: var(--text);
+                cursor: pointer;
+                white-space: nowrap;
+            }}
+            .navacct-menu {{
+                display: none;
+                position: absolute;
+                right: 0;
+                top: 100%;
+                margin-top: 6px;
+                background: #fff;
+                border-radius: 6px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                min-width: 220px;
+                padding: 6px 0;
+                z-index: 50;
+            }}
+            .navacct:hover .navacct-menu, .navacct:focus-within .navacct-menu {{
+                display: block;
+            }}
+            .navacct-item {{
+                display: block;
+                padding: 9px 16px;
+                font-size: 13px;
+                color: var(--text);
+                text-decoration: none;
+                white-space: nowrap;
+            }}
+            .navacct-item:hover {{
+                background: #f4f4f4;
+            }}
+            .navacct-static {{
+                color: var(--text-secondary);
+                font-weight: 600;
+                cursor: default;
+            }}
+            .navacct-static:hover {{
+                background: none;
+            }}
+            .navacct-disabled {{
+                color: var(--text-secondary);
+                cursor: default;
+            }}
+            .navacct-disabled:hover {{
+                background: none;
+            }}
             .header {{
                 flex-wrap: wrap;
             }}
@@ -1445,6 +1639,7 @@ def lambda_handler(event, context):
         </style>
     </head>
     <body>
+        {top_nav_html}
         <div class="header">
             <div class="header-content">
                 <h1><strong>{deal_name}{get_structure_description(map_option_value('Structure', mapped_fields.get('Structure', [])))}</strong></h1>
@@ -1467,8 +1662,6 @@ def lambda_handler(event, context):
             </div>
             <div class="button-group">
                 {bid_button_html}
-                <a href="https://trades.graciagroup.com/" class="btn">Full Books</a>
-                {my_dashboard_btn}
             </div>
         </div>
         {bid_modal_html}
