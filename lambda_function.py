@@ -209,12 +209,14 @@ def _nav_login_url(dest):
     )
 
 
-def _render_top_nav(event):
+def _render_top_nav(event, is_admin=False, active=None):
     """The shared client-facing top nav (identical header in chadgracia/trades):
-    brand, tabs (Indications, Portfolio & Watchlist, two placeholder tabs,
-    Auctions when at least one is live, My Dashboard for eligible tenants),
-    and the account control on the right. Any failure building an optional
-    tab must not break the rest of the nav or the page."""
+    brand, tabs (Indications, Portfolio & Watchlist, Demand Board, Auctions
+    when at least one is live, My Dashboard for eligible tenants), the
+    deal-switcher button, and the account control on the right. Any failure
+    building an optional tab must not break the rest of the nav or the page.
+    `active` names the tab for the current page; it gets .nav-tab-active and
+    aria-current="page". `is_admin` picks the deal-switcher's index endpoint."""
     email = _read_identity_email(event)
 
     if email:
@@ -246,7 +248,7 @@ def _render_top_nav(event):
             else:
                 auc_href = _nav_login_url(auc_dest)
             auctions_tab = (
-                f'<a href="{auc_href}" target="_blank" rel="noopener" class="nav-tab">'
+                f'<a href="{auc_href}" class="nav-tab">'
                 f'Auctions ({len(live)})</a>'
             )
     except Exception as e:
@@ -258,7 +260,7 @@ def _render_top_nav(event):
         if email and email.strip().lower() in _syndicate_eligible_emails():
             dash_token = _make_handoff_token(email)
             dash_href = f"{SYNDICATE_DASH_URL}/?sso={urllib.parse.quote(dash_token, safe='')}"
-            dashboard_tab = f'<a href="{dash_href}" target="_blank" rel="noopener" class="nav-tab">My Dashboard</a>'
+            dashboard_tab = f'<a href="{dash_href}" class="nav-tab">My Dashboard</a>'
     except Exception as e:
         logger.warning(f"My Dashboard nav tab failed (non-fatal): {e}")
         dashboard_tab = ""
@@ -285,21 +287,213 @@ def _render_top_nav(event):
         cur_url = DESK_URL + cur_path + (('?' + cur_qs) if cur_qs else '')
         account_html = f'<a href="{_nav_login_url(cur_url)}" class="btn nav-signin">Sign In</a>'
 
+    # Quick-switcher trigger (Cmd/Ctrl+K also opens it — see the
+    # deal-switcher script).
+    deal_switcher_btn = (
+        '<button type="button" id="dealSwitcherBtn" class="nav-icon-btn" '
+        'title="Switch deal (Ctrl+K)" aria-label="Switch deal">'
+        '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">'
+        '<circle cx="6.5" cy="6.5" r="4.5" fill="none" stroke="currentColor" stroke-width="1.4"></circle>'
+        '<line x1="9.8" y1="9.8" x2="14" y2="14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></line>'
+        '</svg></button>'
+    )
+
     return (
         '<nav class="topnav">'
         '<a href="https://www.graciagroup.com" class="nav-brand">Gracia Group</a>'
         '<div class="nav-tabs">'
-        '<a href="https://trades.graciagroup.com/" class="nav-tab">Indications</a>'
-        f'<a href="{portfolio_href}" target="_blank" rel="noopener" class="nav-tab">Portfolio &amp; Watchlist</a>'
-        '<span class="nav-tab nav-tab-disabled" title="Coming soon">Introductions</span>'
-        f'<a href="{demand_href}" target="_blank" rel="noopener" class="nav-tab">Demand Board</a>'
+        + ('<a href="https://trades.graciagroup.com/" class="nav-tab nav-tab-active" aria-current="page">Indications</a>'
+           if active == 'indications' else
+           '<a href="https://trades.graciagroup.com/" class="nav-tab">Indications</a>')
+        + f'<a href="{portfolio_href}" class="nav-tab">Portfolio &amp; Watchlist</a>'
+        f'<a href="{demand_href}" class="nav-tab">Demand Board</a>'
         + auctions_tab
         + dashboard_tab
         + '</div>'
+        + deal_switcher_btn
         + account_html
         + '</nav>'
     )
 
+
+def _render_deal_switcher_modal(is_admin=False):
+    """Global 'Switch Deal' quick-switcher (same as chadgracia/trades): modal
+    markup plus its script. Deal pages are served on trades.graciagroup.com,
+    so the index is fetched same-origin: /?view=admin-deal-index for admins,
+    /?view=public-deal-index for everyone else. Fetched once per page load
+    and cached in memory; all filtering after that is client-side. This page
+    has no shared copy helpers, so the script carries its own."""
+    index_url = '/?view=admin-deal-index' if is_admin else '/?view=public-deal-index'
+    return '''
+        <div id="dealSwitcherModal" class="deal-switcher-overlay">
+            <div class="deal-switcher-box">
+                <input type="text" id="dealSwitcherInput" class="deal-switcher-input" placeholder="Search a company&hellip;" autocomplete="off" spellcheck="false">
+                <div id="dealSwitcherResults" class="deal-switcher-results"></div>
+            </div>
+        </div>
+        <script>
+        (function () {
+            var COPY_ICON_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M10.5 3.5v-1a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1"></path></svg>';
+            var CHECK_ICON_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8.5l3.5 3.5L13 5"></path></svg>';
+            function copyTextToClipboard(text) {
+                if (navigator.clipboard && window.isSecureContext) {
+                    return navigator.clipboard.writeText(text);
+                }
+                return new Promise(function (resolve, reject) {
+                    var ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.setAttribute('readonly', '');
+                    ta.style.position = 'fixed';
+                    ta.style.top = '-1000px';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    var ok = false;
+                    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+                    document.body.removeChild(ta);
+                    ok ? resolve() : reject(new Error('Copy failed'));
+                });
+            }
+            var cache = null;
+            var modal = document.getElementById('dealSwitcherModal');
+            var input = document.getElementById('dealSwitcherInput');
+            var results = document.getElementById('dealSwitcherResults');
+            var btn = document.getElementById('dealSwitcherBtn');
+            var rows = [];
+            var idx = -1;
+
+            function fmtSize(v) {
+                if (v === null || v === undefined || v === '') return '';
+                var n = Number(v);
+                if (!isFinite(n)) return '';
+                if (n >= 1000000) {
+                    var m = Math.round((n / 1000000) * 10) / 10;
+                    return '$' + (m % 1 === 0 ? m.toFixed(0) : m) + 'M';
+                }
+                if (n >= 1000) return '$' + Math.round(n / 1000) + 'K';
+                return '$' + Math.round(n);
+            }
+            function fmtRange(lo, hi) {
+                var a = fmtSize(lo), b = fmtSize(hi);
+                if (a && b) return a === b ? a : (a + '\\u2013' + b);
+                return a || b || '';
+            }
+            function esc(s) {
+                return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) {
+                    return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+                });
+            }
+            function renderRows(list) {
+                rows = list;
+                idx = list.length ? 0 : -1;
+                if (!list.length) {
+                    results.innerHTML = '<div class="deal-switcher-empty">No matching deals.</div>';
+                    return;
+                }
+                results.innerHTML = list.map(function (d, i) {
+                    var label = esc(d.company) + ' &middot; ' + esc(d.side) + ' ' + esc(fmtRange(d.size_min, d.size_max)) + ' &middot; ' + esc(d.status);
+                    return '<div class="deal-switcher-row' + (i === 0 ? ' active' : '') + '" data-idx="' + i + '" data-id="' + esc(d.id) + '">' +
+                        '<span class="deal-switcher-label">' + label + '</span>' +
+                        '<button type="button" class="deal-switcher-copy" data-id="' + esc(d.id) + '" title="Copy link" aria-label="Copy link">' + COPY_ICON_SVG + '</button>' +
+                        '</div>';
+                }).join('');
+            }
+            function setActive(newIdx) {
+                var rowEls = results.querySelectorAll('.deal-switcher-row');
+                if (!rowEls.length) return;
+                idx = Math.max(0, Math.min(newIdx, rowEls.length - 1));
+                rowEls.forEach(function (el, i) {
+                    el.classList.toggle('active', i === idx);
+                });
+                rowEls[idx].scrollIntoView({block: 'nearest'});
+            }
+            function applyFilter() {
+                var q = input.value.trim().toLowerCase();
+                var list = !cache ? [] : (!q ? cache : cache.filter(function (d) {
+                    return (d.company || '').toLowerCase().indexOf(q) !== -1;
+                }));
+                renderRows(list);
+            }
+            function goToDeal(id) {
+                window.location.href = 'https://trades.graciagroup.com/deal/' + encodeURIComponent(id);
+            }
+            function openModal() {
+                modal.classList.add('show');
+                input.value = '';
+                results.innerHTML = '';
+                setTimeout(function () { input.focus(); }, 0);
+                if (cache) {
+                    renderRows(cache);
+                    return;
+                }
+                results.innerHTML = '<div class="deal-switcher-empty">Loading&hellip;</div>';
+                fetch('__INDEX_URL__', {credentials: 'same-origin'})
+                    .then(function (r) { if (!r.ok) throw new Error('bad status'); return r.json(); })
+                    .then(function (data) {
+                        cache = (data || []).slice().sort(function (a, b) {
+                            return new Date(b.updated || 0) - new Date(a.updated || 0);
+                        });
+                        renderRows(cache);
+                    })
+                    .catch(function () {
+                        results.innerHTML = '<div class="deal-switcher-empty">Failed to load deals.</div>';
+                    });
+            }
+            function closeModal() {
+                modal.classList.remove('show');
+            }
+
+            if (btn) btn.addEventListener('click', openModal);
+            document.addEventListener('keydown', function (e) {
+                if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+                    e.preventDefault();
+                    openModal();
+                    return;
+                }
+                if (!modal.classList.contains('show')) return;
+                if (e.key === 'Escape') {
+                    closeModal();
+                } else if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setActive(idx + 1);
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setActive(idx - 1);
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (idx >= 0 && rows[idx]) goToDeal(rows[idx].id);
+                }
+            });
+            input.addEventListener('input', applyFilter);
+            modal.addEventListener('click', function (e) {
+                if (e.target === modal) closeModal();
+            });
+            results.addEventListener('click', function (e) {
+                var copyBtn = e.target.closest ? e.target.closest('.deal-switcher-copy') : null;
+                if (copyBtn) {
+                    e.stopPropagation();
+                    var id = copyBtn.getAttribute('data-id');
+                    copyTextToClipboard('https://trades.graciagroup.com/deal/' + id).then(function () {
+                        copyBtn.innerHTML = CHECK_ICON_SVG;
+                        copyBtn.title = 'Copied';
+                        clearTimeout(copyBtn._copyTimer);
+                        copyBtn._copyTimer = setTimeout(function () {
+                            copyBtn.innerHTML = COPY_ICON_SVG;
+                            copyBtn.title = 'Copy link';
+                        }, 1200);
+                    });
+                    return;
+                }
+                var row = e.target.closest ? e.target.closest('.deal-switcher-row') : null;
+                if (row) goToDeal(row.getAttribute('data-id'));
+            });
+            results.addEventListener('mousemove', function (e) {
+                var row = e.target.closest ? e.target.closest('.deal-switcher-row') : null;
+                if (!row) return;
+                setActive(parseInt(row.getAttribute('data-idx'), 10));
+            });
+        })();
+        </script>
+    '''.replace('__INDEX_URL__', index_url)
 
 # --- Explore Similar Companies -------------------------------------------
 SIMILAR_TRADES_BASE = "https://trades.graciagroup.com/"
@@ -1065,7 +1259,11 @@ def lambda_handler(event, context):
     
     logger.info(f"Extracted deal_id: {deal_id}")
 
-    top_nav_html = _render_top_nav(event)
+    _qp = event.get('queryStringParameters') or {}
+    _is_admin = ('JK8h5Pq2L9aZ7rT3mN6bX' in
+                 (_qp.get('admin_key'), _get_cookie(event, 'admin_key')))
+    top_nav_html = _render_top_nav(event, _is_admin, active='indications')
+    deal_switcher_html = _render_deal_switcher_modal(_is_admin)
 
     deal_data = fetch_deal_data(deal_id)
     
@@ -1381,8 +1579,8 @@ def lambda_handler(event, context):
                 flex-wrap: nowrap;
                 gap: 12px;
                 padding: 10px 0;
-                margin-bottom: 14px;
-                border-bottom: 1px solid var(--border-strong);
+                margin-bottom: 10px;
+                border-bottom: 1px solid #ddd;
             }}
             .nav-brand {{
                 display: inline-block;
@@ -1408,17 +1606,17 @@ def lambda_handler(event, context):
             .nav-tab {{
                 display: inline-block;
                 background-color: #fff;
-                border: 1px solid var(--border-strong);
+                border: 1px solid #ddd;
                 border-radius: 999px;
                 padding: 7px 11px;
                 font-size: 13.5px;
                 font-weight: 600;
-                color: var(--text);
+                color: var(--ink);
                 text-decoration: none;
                 white-space: nowrap;
             }}
-            /* Wrap below the width where the one-row nav fits (2-digit auction count needs ~1034px). */
-            @media (max-width: 1040px) {{
+            /* Allow wrapping below 1080px. The one-row nav (admin search icon + 2-digit auction count) needs ~954px, so it wraps only when it must. */
+            @media (max-width: 1080px) {{
                 .topnav {{
                     flex-wrap: wrap;
                 }}
@@ -1430,26 +1628,136 @@ def lambda_handler(event, context):
             .nav-tab:hover {{
                 background-color: #f0f0f0;
             }}
+            .nav-tab-active,
+            .nav-tab-active:hover {{
+                background-color: #1a1a1a;
+                border-color: #1a1a1a;
+                color: #fff;
+            }}
             .nav-tab-disabled {{
-                color: var(--text-secondary);
+                color: #999;
                 cursor: default;
             }}
             .nav-tab-disabled:hover {{
                 background-color: #fff;
             }}
-            .nav-signin {{
+            .btn.nav-signin {{
                 background-color: #fff;
-                color: var(--text);
-                border: 1px solid var(--border-strong);
+                color: var(--ink);
+                border: 1px solid #ddd;
                 border-radius: 999px;
                 padding: 8px 16px;
                 font-size: 14px;
                 font-weight: 600;
                 white-space: nowrap;
+                margin-bottom: 0;
                 margin-left: auto;
             }}
-            .nav-signin:hover {{
+            .btn.nav-signin:hover {{
                 background-color: #f0f0f0;
+            }}
+            .nav-icon-btn {{
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 34px;
+                height: 34px;
+                background-color: #fff;
+                border: 1px solid #ddd;
+                border-radius: 999px;
+                color: var(--ink);
+                cursor: pointer;
+                padding: 0;
+            }}
+            .nav-icon-btn:hover {{
+                background-color: #f0f0f0;
+            }}
+            .deal-switcher-overlay {{
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background-color: rgba(0,0,0,0.5);
+                z-index: 2000;
+                padding-top: 12vh;
+            }}
+            .deal-switcher-overlay.show {{
+                display: block;
+            }}
+            .deal-switcher-box {{
+                background-color: #fff;
+                margin: 0 auto;
+                width: 90%;
+                max-width: 560px;
+                border-radius: 8px;
+                box-shadow: 0 8px 30px rgba(0,0,0,0.25);
+                overflow: hidden;
+                font-family: Arial, sans-serif;
+            }}
+            .deal-switcher-input {{
+                width: 100%;
+                box-sizing: border-box;
+                border: none;
+                border-bottom: 1px solid #ddd;
+                padding: 16px 18px;
+                font-size: 16px;
+                font-family: inherit;
+                outline: none;
+            }}
+            .deal-switcher-results {{
+                max-height: 50vh;
+                overflow-y: auto;
+            }}
+            .deal-switcher-row {{
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+                padding: 10px 18px;
+                cursor: pointer;
+                font-size: 14px;
+                color: #333;
+            }}
+            .deal-switcher-row.active {{
+                background-color: #f0f4f8;
+            }}
+            .deal-switcher-label {{
+                flex: 1;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }}
+            .deal-switcher-copy {{
+                flex-shrink: 0;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 26px;
+                height: 26px;
+                background: none;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                color: #666;
+                padding: 0;
+            }}
+            .deal-switcher-copy:hover {{
+                background-color: #e2e6ea;
+                color: #333;
+            }}
+            .deal-switcher-copy svg {{
+                width: 14px;
+                height: 14px;
+                fill: none;
+                stroke: currentColor;
+                stroke-width: 1.3;
+            }}
+            .deal-switcher-empty {{
+                padding: 16px 18px;
+                color: #888;
+                font-size: 14px;
             }}
             .navacct {{
                 position: relative;
@@ -1458,12 +1766,12 @@ def lambda_handler(event, context):
             .navacct-trigger {{
                 display: inline-block;
                 background-color: #fff;
-                border: 1px solid var(--border-strong);
+                border: 1px solid #ddd;
                 border-radius: 999px;
                 padding: 8px 16px;
                 font-size: 14px;
                 font-weight: 600;
-                color: var(--text);
+                color: var(--ink);
                 cursor: pointer;
                 white-space: nowrap;
             }}
@@ -1490,7 +1798,7 @@ def lambda_handler(event, context):
                 display: block;
                 padding: 9px 16px;
                 font-size: 13px;
-                color: var(--text);
+                color: var(--ink);
                 text-decoration: none;
                 white-space: nowrap;
             }}
@@ -1498,7 +1806,7 @@ def lambda_handler(event, context):
                 background: #f4f4f4;
             }}
             .navacct-static {{
-                color: var(--text-secondary);
+                color: var(--text-secondary, #666);
                 font-weight: 600;
                 cursor: default;
             }}
@@ -1506,7 +1814,7 @@ def lambda_handler(event, context):
                 background: none;
             }}
             .navacct-disabled {{
-                color: var(--text-secondary);
+                color: #999;
                 cursor: default;
             }}
             .navacct-disabled:hover {{
@@ -1763,6 +2071,7 @@ def lambda_handler(event, context):
             <p>RMS does not recommend the purchase or sale of Securities. Potential buyers or sellers of the Securities should seek professional counsel prior to entering into any transaction.</p>
             <p>Chad Gracia is a registered agent of Rainmaker Securities, LLC (“RMS”) and a principal of Gracia Group. RMS is a FINRA registered broker-dealer and SIPC member. Find RMS and its agents on BrokerCheck. The RMS relationship summary can be found on the RMS website.  RMS is not an affiliate of Gracia Group. All securities transactions conducted by Chad Gracia will be conducted via RMS.</p>
         </div> 
+        {deal_switcher_html}
     </body>
 
     </html>
