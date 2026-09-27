@@ -65,7 +65,11 @@ DESK_URL = "https://desk.graciagroup.com"
 # --- "My Dashboard" button (additive, copied from chadgracia/trades) -----
 IDENTITY_SECRET = os.environ.get("IDENTITY_SECRET", "")
 SYNDICATE_DASH_URL = "https://ws4stw4iul75a7yx5dra2wmnq40kipav.lambda-url.us-east-1.on.aws"
-SYNDICATE_TENANTS_URL = f"{SYNDICATE_DASH_URL}/?key=JK8h5Pq2L9aZ7rT3mN6bX&tenants=list"
+ADMIN_KEY = os.environ.get("ADMIN_KEY", "")
+SYNDICATE_TENANTS_URL = (
+    f"{SYNDICATE_DASH_URL}/?key={urllib.parse.quote(ADMIN_KEY, safe='')}&tenants=list"
+    if ADMIN_KEY else ""
+)
 _syndicate_tenant_cache = {"emails": None}
 
 
@@ -127,6 +131,10 @@ def _syndicate_eligible_emails():
     if _syndicate_tenant_cache["emails"] is not None:
         return _syndicate_tenant_cache["emails"]
     emails = set()
+    if not SYNDICATE_TENANTS_URL:
+        # No ADMIN_KEY configured: skip the admin-gated fetch; My Dashboard is omitted.
+        _syndicate_tenant_cache["emails"] = emails
+        return emails
     try:
         req = urllib.request.Request(SYNDICATE_TENANTS_URL)
         with urllib.request.urlopen(req, timeout=3) as resp:
@@ -1260,8 +1268,10 @@ def lambda_handler(event, context):
     logger.info(f"Extracted deal_id: {deal_id}")
 
     _qp = event.get('queryStringParameters') or {}
-    _is_admin = ('JK8h5Pq2L9aZ7rT3mN6bX' in
-                 (_qp.get('admin_key'), _get_cookie(event, 'admin_key')))
+    # Fail closed: with no ADMIN_KEY configured, nobody is admin.
+    _is_admin = bool(ADMIN_KEY) and any(
+        v and hmac.compare_digest(v.encode(), ADMIN_KEY.encode())
+        for v in (_qp.get('admin_key'), _get_cookie(event, 'admin_key')))
     top_nav_html = _render_top_nav(event, _is_admin, active='indications')
     deal_switcher_html = _render_deal_switcher_modal(_is_admin)
 
