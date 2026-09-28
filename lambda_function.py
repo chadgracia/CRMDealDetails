@@ -980,6 +980,10 @@ STAGE_TOOLTIPS = {
     'obsolete': 'Sold out or taken down. Bid to re-open.',
 }
 
+# Stages that turn the page into a closed-deal landing page for non-admins.
+# Hold is NOT closed.
+CLOSED_STAGES = {"obsolete", "won", "lost"}
+
 
 def get_deal_stage_name(deal_data):
     for key in ('deal_stage', 'stage'):
@@ -1327,6 +1331,11 @@ def lambda_handler(event, context):
     
     if not deal_data:
         return {'statusCode': 404, 'body': json.dumps({"error": "Deal not found"})}
+
+    # Closed deals (Obsolete/Won/Lost) render a trimmed landing page for
+    # non-admins; admins always get the full page.
+    _early_stage = get_deal_stage_name(deal_data)
+    is_closed_public = (_early_stage.lower() in CLOSED_STAGES) and not _is_admin
     
     custom_fields = deal_data.get('custom_fields', {})
     mapped_fields = map_custom_fields(custom_fields)
@@ -1344,7 +1353,9 @@ def lambda_handler(event, context):
 
     # Skip the News section for companies whose search returns mostly junk (see NEWS_SKIP_COMPANIES)
     news_data = None
-    if company_name.strip().lower() in NEWS_SKIP_COMPANIES:
+    if is_closed_public:
+        pass
+    elif company_name.strip().lower() in NEWS_SKIP_COMPANIES:
         logger.info(f"News disabled for company: {company_name}")
     else:
         news_data = test_news_api(f'"{company_name}" AND ({business_context})')
@@ -1455,6 +1466,8 @@ def lambda_handler(event, context):
     stage_name = get_deal_stage_name(deal_data)
     logger.info(f"Deal stage: {stage_name or '(none)'} (raw: {deal_data.get('deal_stage')!r})")
     stage_html = render_stage_status(stage_name)
+    if is_closed_public:
+        stage_html = ""
 
     table_data = [
         ("Type", map_option_value('Type', mapped_fields.get('Type', []))),
@@ -1523,7 +1536,7 @@ def lambda_handler(event, context):
         f"&deal_id={deal_id}"
         + (f"&px={urllib.parse.quote(str(gross_price))}" if gross_price else "")
     )
-    _live_auction_id = live_auction_for_deal(deal_id)
+    _live_auction_id = None if is_closed_public else live_auction_for_deal(deal_id)
     bid_dest = (f"{DESK_URL}/?view=auction&id={urllib.parse.quote(str(_live_auction_id))}"
                 if _live_auction_id else _web_bid_dest)
     if _live_auction_id:
@@ -1536,7 +1549,9 @@ def lambda_handler(event, context):
     # token and bounces back here to bid_dest itself.
     _bid_email = _read_identity_email(event)
     bid_modal_html = ""
-    if _bid_email:
+    if is_closed_public:
+        bid_button_html = ""
+    elif _bid_email:
         _bid_token = _make_handoff_token(_bid_email)
         _bid_sep = '&' if '?' in bid_dest else '?'
         bid_href = f"{bid_dest}{_bid_sep}sso={urllib.parse.quote(_bid_token, safe='')}"
@@ -1574,13 +1589,13 @@ def lambda_handler(event, context):
 
     deal_type = map_option_value('Type', mapped_fields.get('Type', []))
     owner_iqf_yes = False
-    if deal_type == "Buy Order":
+    if deal_type == "Buy Order" and not is_closed_public:
         owner_iqf_yes = fetch_person_iqf_yes((deal_data.get('primary_contact') or {}).get('id'))
-    qa_box_html = render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room, owner_iqf_yes)
+    qa_box_html = "" if is_closed_public else render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room, owner_iqf_yes)
     _msg_raw = (deal_data.get('custom_fields') or {}).get('custom_label_4001285')
     hide_questions = (str(_msg_raw) == '7187011')
     similar_html = render_similar_companies(company_name, deal_type, deal_id)
-    weekly_signup_html = render_weekly_signup(deal_id, deal_name)
+    weekly_signup_html = "" if is_closed_public else render_weekly_signup(deal_id, deal_name)
     _side_inner = ('' if hide_questions else qa_box_html) + similar_html
     side_col_html = '<div class="side-col">' + _side_inner + '</div>' if _side_inner.strip() else ''
 
@@ -1618,6 +1633,33 @@ def lambda_handler(event, context):
         
         return logo_url
 
+
+    closed_banner_html = ""
+    deal_main_inner = ""
+    if is_closed_public:
+        closed_banner_html = """<div class="closed-banner" style="margin:24px 0;padding:20px 22px;border:1px solid var(--border-strong,#d8d4ca);border-left:4px solid var(--accent,#3a5a75);border-radius:6px;background:#faf8f3">
+  <h2 style="margin:0 0 8px;font-size:20px">This allocation is no longer available</h2>
+  <p style="margin:0 0 16px;color:var(--text-secondary,#555)">Search for similar opportunities, or view all live indications (sign-in required).</p>
+  <div style="display:flex;flex-wrap:wrap;gap:12px">
+    <a href="#" class="btn bid-btn" onclick="var b=document.getElementById('dealSwitcherBtn');if(b){b.click();}return false;">Search similar opportunities</a>
+    <a href="https://trades.graciagroup.com/" class="btn">View live indications</a>
+  </div>
+</div>
+"""
+    else:
+        deal_main_inner = f"""{generate_table_html(table_data)}
+
+        <div id="spvSection" style="display: {'' if map_option_value('Structure', mapped_fields.get('Structure', [])) == 'Fund' else 'none'}">
+        <h2>SPV Details&thinsp;*</h2>
+        {generate_table_html(spv_data, spv_split)}
+        <p style="font-size:13.5px;color:#555;margin:10px 0 0 2px;font-style:italic">* Fees shown are the seller&rsquo;s SPV terms only and do not include broker commission, which is quoted separately.</p>
+        </div>
+{weekly_signup_html}
+        <!-- News Section -->
+        <div id="newsSection" class="news-section">
+            {news_html}
+        </div>
+"""
 
     _seo_type = map_option_value('Type', mapped_fields.get('Type', []))
     _seo_structure = map_option_value('Structure', mapped_fields.get('Structure', []))
@@ -2110,19 +2152,7 @@ def lambda_handler(event, context):
 
         <div class="deal-body">
             <div class="deal-main">
-{generate_table_html(table_data)}
-
-        <div id="spvSection" style="display: {'' if map_option_value('Structure', mapped_fields.get('Structure', [])) == 'Fund' else 'none'}">
-        <h2>SPV Details&thinsp;*</h2>
-        {generate_table_html(spv_data, spv_split)}
-        <p style="font-size:13.5px;color:#555;margin:10px 0 0 2px;font-style:italic">* Fees shown are the seller&rsquo;s SPV terms only and do not include broker commission, which is quoted separately.</p>
-        </div>
-{weekly_signup_html}
-        <!-- News Section -->
-        <div id="newsSection" class="news-section">
-            {news_html}
-        </div>
-            </div>
+{closed_banner_html}{deal_main_inner}            </div>
             {side_col_html}
         </div>
         <hr>
