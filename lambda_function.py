@@ -220,7 +220,7 @@ def _nav_login_url(dest):
 def _render_top_nav(event, is_admin=False, active=None):
     """The shared client-facing top nav (identical header in chadgracia/trades):
     brand, tabs (Indications, Portfolio & Watchlist, Demand Board, Auctions
-    when at least one is live, My Dashboard for eligible tenants), the
+    for admins when at least one is live, My Dashboard for eligible tenants), the
     deal-switcher button, and the account control on the right. Any failure
     building an optional tab must not break the rest of the nav or the page.
     `active` names the tab for the current page; it gets .nav-tab-active and
@@ -244,7 +244,7 @@ def _render_top_nav(event, is_admin=False, active=None):
     auctions_tab = ""
     try:
         live = _live_auctions_for_nav()
-        if live:
+        if live and is_admin:
             if len(live) == 1:
                 auc_dest = f"{DESK_URL}/?view=auction&id={urllib.parse.quote(str(live[0][0]))}"
             else:
@@ -398,7 +398,11 @@ def _render_deal_switcher_modal(is_admin=False):
                     return;
                 }
                 results.innerHTML = list.map(function (d, i) {
-                    var label = esc(d.company) + ' &middot; ' + esc(d.side) + ' ' + esc(fmtRange(d.size_min, d.size_max)) + ' &middot; ' + esc(d.status);
+                    var label = d.status !== undefined
+                        ? esc(d.company) + ' &middot; ' + esc(d.side) + ' ' + esc(fmtRange(d.size_min, d.size_max)) + ' &middot; ' + esc(d.status)
+                        : [d.company, d.side, d.net,
+                           d.min_size && d.max_size && d.min_size !== d.max_size ? d.min_size + '\\u2013' + d.max_size : (d.min_size || d.max_size)
+                          ].filter(Boolean).map(esc).join(' &middot; ');
                     return '<div class="deal-switcher-row' + (i === 0 ? ' active' : '') + '" data-idx="' + i + '" data-id="' + esc(d.id) + '">' +
                         '<span class="deal-switcher-label">' + label + '</span>' +
                         '<button type="button" class="deal-switcher-copy" data-id="' + esc(d.id) + '" title="Copy link" aria-label="Copy link">' + COPY_ICON_SVG + '</button>' +
