@@ -925,6 +925,50 @@ def get_structure_description(structures):
         return f" - {' or '.join(descriptions)}"
     return ""
 
+SEO_SERIES_OPTS = {"5077840": "Seed", "5077843": "A", "5077846": "B", "5077849": "C",
+                   "5077852": "D", "5077855": "E", "5077858": "F", "5077861": "G",
+                   "5077864": "H", "5077867": "I", "6539216": "N"}
+SEO_SKIP_COMPANIES = {"anthropic"}
+SEO_NAME_OVERRIDES = {"1x": "1X Technologies"}
+
+def build_seo_title(deal_name, company_name, deal_type, structure, series_raw):
+    """Return the plain-text <title>, or None for skipped companies
+    (caller then keeps the original deal_name title)."""
+    import re as _re
+    raw = str(company_name or '')
+    if not raw.strip() or raw.strip().lower() == 'unknown company':
+        raw = str(deal_name or '').split(':')[0]
+    comp = _re.sub(r'\s*\(.*?\)\s*', ' ', raw)
+    comp = _re.sub(r'\s+', ' ', comp).strip()
+    low = comp.lower()
+    if any(s in low for s in SEO_SKIP_COMPANIES) or any(s in str(deal_name or '').lower() for s in SEO_SKIP_COMPANIES):
+        return None
+    for key, val in SEO_NAME_OVERRIDES.items():
+        if low == key or low.startswith(key + ' '):
+            comp = val
+            break
+    if not comp:
+        return None
+    if deal_type == 'Buy Order':
+        return f'Sell {comp} Pre-IPO Stock – Active Buyer'
+    # Series from deal field custom_label_3064333 (int, str, or list); SPV titles only
+    sv = series_raw
+    if isinstance(sv, list):
+        sv = sv[0] if sv else ''
+    ser = SEO_SERIES_OPTS.get(str(sv).strip(), '') if sv not in (None, '') else ''
+    ser_txt = '' if not ser else ('Seed' if ser == 'Seed' else f'Series {ser}')
+    tokens = [t.strip() for t in str(structure or '').split(',')]
+    if 'Fund' in tokens:
+        suffix = f'{ser_txt} SPV Units'.strip()
+    elif 'Forward' in tokens:
+        suffix = 'Forward Contract'
+    elif 'Direct' in tokens or 'Direct Only' in tokens:
+        suffix = 'Direct Transfer'
+    else:
+        suffix = ''
+    title = f'{comp} Pre-IPO Stock' + (f' – {suffix}' if suffix else '')
+    return _re.sub(r'\s+', ' ', title).strip()
+
 # --- Deal stage ------------------------------------------------------------
 # PipelineCRM carries the stage on the deal itself. It normally arrives as a
 # nested object (deal_stage: {"id": ..., "name": "Firm"}); some responses send
@@ -1575,13 +1619,18 @@ def lambda_handler(event, context):
         return logo_url
 
 
+    _seo_type = map_option_value('Type', mapped_fields.get('Type', []))
+    _seo_structure = map_option_value('Structure', mapped_fields.get('Structure', []))
+    seo_title = build_seo_title(deal_name, company_name, str(_seo_type or ''), str(_seo_structure or ''), custom_fields.get('custom_label_3064333'))
+    seo_title_html = html_mod.escape(seo_title, quote=True) if seo_title else deal_name
+
     html_content = f"""
     <!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>{deal_name}</title>
+        <title>{seo_title_html}</title>
         <link rel="stylesheet" href="https://s3.us-east-1.amazonaws.com/main.css/master.css">
         <style>
             /* Page-specific layout only. The shared Gracia look (font stack,
