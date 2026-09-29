@@ -1666,11 +1666,17 @@ def lambda_handler(event, context):
     seo_title = build_seo_title(deal_name, company_name, str(_seo_type or ''), str(_seo_structure or ''), custom_fields.get('custom_label_3064333'))
     seo_title_html = html_mod.escape(seo_title, quote=True) if seo_title else deal_name
 
+    ga_head_html = '' if _is_admin else (
+        '<script async src="https://www.googletagmanager.com/gtag/js?id=G-L9JN3TRR2S"></script>'
+        '<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}'
+        "gtag('js',new Date());gtag('config','G-L9JN3TRR2S');</script>")
+
     html_content = f"""
     <!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
+        {ga_head_html}
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>{seo_title_html}</title>
         <link rel="stylesheet" href="https://s3.us-east-1.amazonaws.com/main.css/master.css">
