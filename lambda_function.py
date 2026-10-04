@@ -847,6 +847,12 @@ def format_valuation(valuation):
         return ""
     return f" (${valuation:.1f}Bn)"
 
+def format_tilde_valuation(billions):
+    """Billions -> "~$4.5B" (>= 1B, one decimal max, zeros trimmed) or "~$750M"."""
+    if billions >= 1:
+        return "~$" + f"{billions:.1f}".rstrip("0").rstrip(".") + "B"
+    return f"~${round(billions * 1000):,.0f}M"
+
 def format_currency(value, include_cents=False):
     try:
         float_value = float(value)
@@ -1430,9 +1436,35 @@ def lambda_handler(event, context):
         _sol_seller_gp = int(float(str(mapped_fields.get('Seller Type', '') or 0))) == 7020357
     except (ValueError, TypeError):
         _sol_seller_gp = False
+    # Seller's Est. Valuation (billions): blank = none, exactly 0 = seller said unknown.
+    _est_val_raw = (deal_data.get('custom_fields') or {}).get('custom_label_4009563')
+    if isinstance(_est_val_raw, list):
+        _est_val_raw = _est_val_raw[0] if _est_val_raw else None
+    try:
+        _est_val = None if _est_val_raw is None or str(_est_val_raw).strip() in ('', 'None') else float(str(_est_val_raw).replace(',', ''))
+    except (ValueError, TypeError):
+        _est_val = None
+    _est_val_pos = _est_val is not None and _est_val > 0
+    _price_val_shown = ((not _price_empty(gross_price) and gross_valuation is not None)
+                        or (not _price_empty(net_price) and net_valuation is not None))
+    est_val_row = None
+    if _sol_type == "Sell Order" and _sol_seller_gp and _est_val_pos:
+        est_val_row = ("Round valuation", f"{format_tilde_valuation(_est_val)} pre-money")
+    elif _sol_type == "Sell Order" and not _sol_seller_gp and not _price_val_shown and _est_val is not None:
+        if _est_val_pos:
+            est_val_row = ("Est. Valuation", f"{format_tilde_valuation(_est_val)} (seller&rsquo;s estimate)")
+        elif _est_val == 0:
+            est_val_row = ("Est. Valuation", "Not provided or unknown")
+
     if _price_empty(gross_price) and _price_empty(net_price):
-        if _sol_type == "Sell Order" and _sol_seller_gp:
+        if _sol_type == "Sell Order" and _sol_seller_gp and _est_val_pos:
+            net_with_valuation = f"Tied to round at {format_tilde_valuation(_est_val)} pre-money"
+            gross_with_valuation = "-"
+        elif _sol_type == "Sell Order" and _sol_seller_gp:
             net_with_valuation = "Price tied to upcoming round"
+            gross_with_valuation = "-"
+        elif _sol_type == "Sell Order" and _est_val_pos:
+            net_with_valuation = f"Priced at {format_tilde_valuation(_est_val)} valuation"
             gross_with_valuation = "-"
         elif _sol_type == "Sell Order":
             gross_with_valuation = "Make a bid"
@@ -1475,6 +1507,7 @@ def lambda_handler(event, context):
         ("Class", map_option_value('Class', mapped_fields.get('Class', ''))),
         ("Net", net_with_valuation),
         ("Gross", gross_with_valuation),
+        *([est_val_row] if est_val_row else []),
         ("Shares", "{:,.0f}".format(float(mapped_fields.get('Shares', 0))) if mapped_fields.get('Shares') is not None else ''),
         ("Company LR (PPS)", format_currency(company_lr_pps, include_cents=True)),
         ("Company LR Val ($Bn)", format_currency(company_lr_val, include_cents=True)),
