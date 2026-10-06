@@ -26,6 +26,9 @@ QUESTION_CATALOG_BUYER = [   # shown on SELL orders (a buyer asking about the se
     {"id": "class",        "q": "Are these shares common or preferred?",                            "field": "Class"},
     {"id": "min_max",      "q": "What is the minimum / maximum size?",                              "field": "min_max"},
     {"id": "shares_avail", "q": "How many shares are available to buy?",                            "field": "Shares"},
+    {"id": "max_ticket",    "q": "What is the maximum ticket you can take?", "field": "Max Deal Size"},
+    {"id": "min_ticket",    "q": "What is the minimum ticket?",              "field": "Min Deal Size"},
+    {"id": "est_valuation", "q": "What is the estimated valuation?",         "field": None},
     {"id": "seller_fee",   "q": "What is the seller's one-time fee?",                               "field": "Seller Fee"},
     {"id": "fee_structure","q": "Would you accept this fee structure?",                              "field": None},
     {"id": "data_room_avail","q": "Is a data room available for diligence?",                         "field": None},
@@ -1129,7 +1132,7 @@ def fetch_person_iqf_yes(person_id):
         v = v[0] if v else None
     return str(v) == "6496840"
 
-def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=True, owner_iqf_yes=False):
+def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=True, owner_iqf_yes=False, est_val=None):
     """Build the right-hand 'Questions about this deal' box (display only).
 
     Picks the buyer or seller question set based on the deal type, marks
@@ -1182,12 +1185,20 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=Tr
             continue
         if qid == "min_max" and mapped_fields.get('Min Deal Size') and mapped_fields.get('Max Deal Size'):
             continue
+        # SPVs sell units, not shares; min/max size is asked as min_ticket / max_ticket.
+        if qid in ("shares_avail", "min_max") and is_spv:
+            continue
         if qid == "shares_avail" and mapped_fields.get('Shares'):
             continue
-        # SPV with a known max ticket whose price tracks a tender/round: the max
-        # share count is moot, so don't ask it.
-        if qid == "shares_avail" and is_spv and is_tender and mapped_fields.get('Max Deal Size'):
+        if qid == "max_ticket" and (not is_spv or mapped_fields.get('Max Deal Size')):
             continue
+        if qid == "min_ticket" and (not is_spv or mapped_fields.get('Min Deal Size')):
+            continue
+        # Blank is the only case asked: >0 is shown on the page, 0 = seller said unknown.
+        if qid == "est_valuation" and (not is_spv or est_val is not None):
+            continue
+        if qid == "est_valuation" and str(mapped_fields.get('Seller Type', '')) == '7020357':
+            question_text = "What is the round valuation (pre-money)?"
         if qid == "seller_fee" and (mapped_fields.get('Seller Fee') or not is_spv):
             continue
         if qid == "fee_structure" and not is_spv:
@@ -1625,7 +1636,7 @@ def lambda_handler(event, context):
     owner_iqf_yes = False
     if deal_type == "Buy Order" and not is_closed_public:
         owner_iqf_yes = fetch_person_iqf_yes((deal_data.get('primary_contact') or {}).get('id'))
-    qa_box_html = "" if is_closed_public else render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room, owner_iqf_yes)
+    qa_box_html = "" if is_closed_public else render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room, owner_iqf_yes, est_val=_est_val)
     _msg_raw = (deal_data.get('custom_fields') or {}).get('custom_label_4001285')
     hide_questions = (str(_msg_raw) == '7187011')
     similar_html = render_similar_companies(company_name, deal_type, deal_id)
