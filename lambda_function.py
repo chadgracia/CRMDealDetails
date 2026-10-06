@@ -852,7 +852,7 @@ def format_valuation(valuation):
 
 def format_tilde_valuation(billions):
     """Billions -> "~$4.5B" (>= 1B, one decimal max, zeros trimmed) or "~$750M"."""
-    if billions >= 1:
+    if billions >= 1 or round(billions * 1000) >= 1000:
         return "~$" + f"{billions:.1f}".rstrip("0").rstrip(".") + "B"
     return f"~${round(billions * 1000):,.0f}M"
 
