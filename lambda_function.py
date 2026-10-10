@@ -1111,12 +1111,10 @@ def map_option_value(field, value):
         return ', '.join([options.get(field, {}).get(str(v), v) for v in value])
     return options.get(field, {}).get(str(value), value)
 
-def fetch_person(person_id):
-    """The deal's primary contact record (one Pipeline GET per request), or
-    None when there is no id or the lookup fails. Shared by the IQF check
-    (Questions box) and the header verification marks."""
+def fetch_person_iqf_yes(person_id):
+    """True if the deal's primary contact has IQF Status = Yes (6496840)."""
     if not person_id:
-        return None
+        return False
     url = f"https://api.pipelinecrm.com/api/v3/people/{person_id}.json"
     headers = {
         "Authorization": f"Bearer {JWT_TOKEN}",
@@ -1127,19 +1125,36 @@ def fetch_person(person_id):
         with urllib.request.urlopen(req) as response:
             person = json.loads(response.read().decode())
     except Exception as e:
-        logger.error(f"Person lookup failed for person {person_id}: {e}")
-        return None
-    return person if isinstance(person, dict) else None
+        logger.error(f"IQF lookup failed for person {person_id}: {e}")
+        return False
+    v = (person.get("custom_fields") or {}).get("custom_label_3763008")
+    if isinstance(v, list):
+        v = v[0] if v else None
+    return str(v) == "6496840"
+
+# --- Header onboarding status item (Seller KYC / Buyer accreditation) ------
+# Read from syndicate-dash's slim people index in S3 -- never a live Pipeline
+# call, never the full people.json. Module-level cache keyed on the object's
+# ETag, HEAD at most once per PEOPLE_SLIM_TTL_SECONDS per warm container. Any
+# S3 error (incl. AccessDenied) or missing data hides the item silently.
+PEOPLE_SLIM_BUCKET = "full-pipeline-cache"
+PEOPLE_SLIM_KEY = "syndicate-dash/people-slim.json"
+PEOPLE_SLIM_TTL_SECONDS = 15 * 60
+KYC_FIELD = "custom_label_3796440"            # CEF/ID: Yes 6600515, N/A 6600516
+KYC_OK_IDS = {"6600515", "6600516"}
+ACCREDITATION_FIELD = "custom_label_3763008"  # IQF Status: Yes 6496840, Unnecessary 6596073
+ACCREDITATION_OK_IDS = {"6496840", "6596073"}
+KYC_TOOLTIP = "The seller has completed Rainmaker Securities' client onboarding (KYC)."
+ACCREDITATION_TOOLTIP = "The buyer has submitted an investor qualification form to Rainmaker Securities."
+_people_slim_cache = {"etag": None, "checked_at": 0.0, "by_id": None}
 
 
-def _person_cf_ids(person, key):
-    """A person custom field as a set of option-id strings; the value may be a
-    single id or a list (entries may also be {"id": ...} dicts)."""
-    v = ((person or {}).get("custom_fields") or {}).get(key)
-    if v is None:
+def _cf_option_ids(value):
+    """A custom-field value (single id, list, or {"id": ...} dicts) as a set of id strings."""
+    if value is None:
         return set()
     out = set()
-    for item in (v if isinstance(v, list) else [v]):
+    for item in (value if isinstance(value, list) else [value]):
         if isinstance(item, dict):
             item = item.get("option_id") or item.get("id") or item.get("value")
         if item not in (None, ""):
@@ -1147,31 +1162,67 @@ def _person_cf_ids(person, key):
     return out
 
 
-def person_iqf_yes(person):
-    """True if the primary contact has IQF Status = Yes (6496840)."""
-    return "6496840" in _person_cf_ids(person, "custom_label_3763008")
+def _people_slim_status_index():
+    """{person id str: (kyc_ok, accreditation_ok)} from people-slim.json, or
+    None on any S3/parse failure. Only the two booleans are kept in memory."""
+    now = time.time()
+    cache = _people_slim_cache
+    if cache["by_id"] is not None and now - cache["checked_at"] < PEOPLE_SLIM_TTL_SECONDS:
+        return cache["by_id"]
+    try:
+        s3 = boto3.client('s3')
+        etag = s3.head_object(Bucket=PEOPLE_SLIM_BUCKET, Key=PEOPLE_SLIM_KEY).get("ETag")
+        if cache["by_id"] is not None and etag and etag == cache["etag"]:
+            cache["checked_at"] = now
+            return cache["by_id"]
+        obj = s3.get_object(Bucket=PEOPLE_SLIM_BUCKET, Key=PEOPLE_SLIM_KEY)
+        data = json.loads(obj["Body"].read())
+        by_id = {}
+        for p in (data.get("people") or []) if isinstance(data, dict) else []:
+            if not isinstance(p, dict) or p.get("id") is None:
+                continue
+            cf = p.get("custom_fields") or {}
+            by_id[str(p["id"])] = (bool(_cf_option_ids(cf.get(KYC_FIELD)) & KYC_OK_IDS),
+                                   bool(_cf_option_ids(cf.get(ACCREDITATION_FIELD)) & ACCREDITATION_OK_IDS))
+        cache.update({"etag": etag or obj.get("ETag"), "checked_at": now, "by_id": by_id})
+        return by_id
+    except Exception as e:
+        logger.warning(f"people-slim.json read failed (status item hidden): {type(e).__name__}: {e}")
+        return None
 
 
-# Header verification marks (Sell deals): positive only -- a mark that is not
-# earned renders nothing; never a negative state, never the words CEF/IQF.
-VERIFY_SELLER_ID_OK = {"6600515", "6600516"}        # CEF custom_label_3796440: Yes / N/A
-VERIFY_QUALIFICATION_OK = {"6496840", "6596073"}    # IQF custom_label_3763008: Yes / Unnecessary
+def _deal_linked_person_ids(deal_data):
+    """Every person linked to the deal record already fetched: primary contact
+    plus the linked people list (whichever shape the record carries)."""
+    ids = []
+    def add(v):
+        if v not in (None, "") and str(v) not in ids:
+            ids.append(str(v))
+    add((deal_data.get('primary_contact') or {}).get('id') if isinstance(deal_data.get('primary_contact'), dict) else None)
+    add(deal_data.get('primary_contact_id'))
+    for p in deal_data.get('people') or []:
+        add(p.get('id') if isinstance(p, dict) else p)
+    for pid in deal_data.get('person_ids') or []:
+        add(pid)
+    return ids
 
 
-def render_verification_marks(person, deal_type="Sell Order"):
-    """Header chips after Status, or '' when none is earned / no person.
-    Sell Order: '✓ Seller ID verified', '✓ Investor qualification on file'.
-    Buy Order: '✓ Buyer qualification on file', '✓ Buyer ID verified'."""
-    if not person:
+def render_onboarding_status(deal_type, person_ids, index):
+    """' • Seller KYC: Complete|Pending' (Sell) or ' • Buyer accreditation:
+    On file|Pending' (Buy), or '' when there's no type, no linked people or no
+    index. Grey like the Deal ID line; only the positive value is green."""
+    if deal_type not in ("Sell Order", "Buy Order") or not person_ids or index is None:
         return ''
-    id_ok = bool(_person_cf_ids(person, "custom_label_3796440") & VERIFY_SELLER_ID_OK)
-    qual_ok = bool(_person_cf_ids(person, "custom_label_3763008") & VERIFY_QUALIFICATION_OK)
-    if deal_type == "Buy Order":
-        marks = [m for m, ok in (("Buyer qualification on file", qual_ok), ("Buyer ID verified", id_ok)) if ok]
+    flags = [index.get(pid) for pid in person_ids]
+    if deal_type == "Sell Order":
+        ok = any(f and f[0] for f in flags)
+        label, good, tip = "Seller KYC", "Complete", KYC_TOOLTIP
     else:
-        marks = [m for m, ok in (("Seller ID verified", id_ok), ("Investor qualification on file", qual_ok)) if ok]
-    return "".join(f'<span class="verify-mark-wrap"> &bull; <span class="verify-mark">&#10003; {m}</span></span>'
-                   for m in marks)
+        ok = any(f and f[1] for f in flags)
+        label, good, tip = "Buyer accreditation", "On file", ACCREDITATION_TOOLTIP
+    value = (f'<span class="onboard-ok">{good}</span>' if ok else 'Pending')
+    return f'<span class="onboard-status" title="{html_mod.escape(tip, quote=True)}"> &bull; {label}: {value}</span>'
+
 
 def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=True, owner_iqf_yes=False, est_val=None):
     """Build the right-hand 'Questions about this deal' box (display only).
@@ -1674,14 +1725,13 @@ def lambda_handler(event, context):
         )
 
     deal_type = map_option_value('Type', mapped_fields.get('Type', []))
-    # Primary contact, fetched ONCE: Buy orders use it for the Questions box's
-    # IQF check, Sell orders for the header verification marks.
-    primary_person = None
-    if deal_type in ("Buy Order", "Sell Order") and not is_closed_public:
-        primary_person = fetch_person((deal_data.get('primary_contact') or {}).get('id'))
-    owner_iqf_yes = deal_type == "Buy Order" and person_iqf_yes(primary_person)
-    if deal_type in ("Sell Order", "Buy Order") and stage_html:
-        stage_html += render_verification_marks(primary_person, deal_type)
+    owner_iqf_yes = False
+    if deal_type == "Buy Order" and not is_closed_public:
+        owner_iqf_yes = fetch_person_iqf_yes((deal_data.get('primary_contact') or {}).get('id'))
+    if not is_closed_public and deal_type in ("Sell Order", "Buy Order"):
+        _linked_ids = _deal_linked_person_ids(deal_data)
+        if _linked_ids:
+            stage_html += render_onboarding_status(deal_type, _linked_ids, _people_slim_status_index())
     qa_box_html = "" if is_closed_public else render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room, owner_iqf_yes, est_val=_est_val)
     _msg_raw = (deal_data.get('custom_fields') or {}).get('custom_label_4001285')
     hide_questions = (str(_msg_raw) == '7187011')
@@ -2100,10 +2150,8 @@ def lambda_handler(event, context):
             .status-inquiry  {{ color: var(--stage-amber); }}
             .status-obsolete {{ color: var(--neg); }}
             .status-neutral  {{ color: var(--text); }}
-            .verify-mark-wrap {{ white-space: nowrap; }}
-            .verify-mark {{ display: inline-block; color: var(--pos); font-weight: 600; font-size: 12px;
-                            line-height: 1.3; padding: 0 7px; border: 1px solid currentColor;
-                            border-radius: 999px; vertical-align: 1px; }}
+            .onboard-status {{ white-space: nowrap; }}
+            .onboard-ok {{ color: var(--pos); }}
             .deal-body {{ display:flex; gap:24px; align-items:flex-start; flex-wrap:wrap; }}
             .deal-main {{ flex:1; min-width:320px; }}
             .qa-box {{ width:300px; border:1px solid var(--border-strong); border-radius:8px;
