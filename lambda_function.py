@@ -1111,10 +1111,12 @@ def map_option_value(field, value):
         return ', '.join([options.get(field, {}).get(str(v), v) for v in value])
     return options.get(field, {}).get(str(value), value)
 
-def fetch_person_iqf_yes(person_id):
-    """True if the deal's primary contact has IQF Status = Yes (6496840)."""
+def fetch_person(person_id):
+    """The deal's primary contact record (one Pipeline GET per request), or
+    None when there is no id or the lookup fails. Shared by the IQF check
+    (Questions box) and the header verification marks."""
     if not person_id:
-        return False
+        return None
     url = f"https://api.pipelinecrm.com/api/v3/people/{person_id}.json"
     headers = {
         "Authorization": f"Bearer {JWT_TOKEN}",
@@ -1125,12 +1127,49 @@ def fetch_person_iqf_yes(person_id):
         with urllib.request.urlopen(req) as response:
             person = json.loads(response.read().decode())
     except Exception as e:
-        logger.error(f"IQF lookup failed for person {person_id}: {e}")
-        return False
-    v = (person.get("custom_fields") or {}).get("custom_label_3763008")
-    if isinstance(v, list):
-        v = v[0] if v else None
-    return str(v) == "6496840"
+        logger.error(f"Person lookup failed for person {person_id}: {e}")
+        return None
+    return person if isinstance(person, dict) else None
+
+
+def _person_cf_ids(person, key):
+    """A person custom field as a set of option-id strings; the value may be a
+    single id or a list (entries may also be {"id": ...} dicts)."""
+    v = ((person or {}).get("custom_fields") or {}).get(key)
+    if v is None:
+        return set()
+    out = set()
+    for item in (v if isinstance(v, list) else [v]):
+        if isinstance(item, dict):
+            item = item.get("option_id") or item.get("id") or item.get("value")
+        if item not in (None, ""):
+            out.add(str(item).split(".")[0])
+    return out
+
+
+def person_iqf_yes(person):
+    """True if the primary contact has IQF Status = Yes (6496840)."""
+    return "6496840" in _person_cf_ids(person, "custom_label_3763008")
+
+
+# Header verification marks (Sell deals): positive only -- a mark that is not
+# earned renders nothing; never a negative state, never the words CEF/IQF.
+VERIFY_SELLER_ID_OK = {"6600515", "6600516"}        # CEF custom_label_3796440: Yes / N/A
+VERIFY_QUALIFICATION_OK = {"6496840", "6596073"}    # IQF custom_label_3763008: Yes / Unnecessary
+
+
+def render_verification_marks(person):
+    """'• ✓ Seller ID verified • ✓ Investor qualification on file' chips for the
+    header line after Status, or '' when none is earned / no person."""
+    if not person:
+        return ''
+    marks = []
+    if _person_cf_ids(person, "custom_label_3796440") & VERIFY_SELLER_ID_OK:
+        marks.append("Seller ID verified")
+    if _person_cf_ids(person, "custom_label_3763008") & VERIFY_QUALIFICATION_OK:
+        marks.append("Investor qualification on file")
+    return "".join(f'<span class="verify-mark-wrap"> &bull; <span class="verify-mark">&#10003; {m}</span></span>'
+                   for m in marks)
 
 def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=True, owner_iqf_yes=False, est_val=None):
     """Build the right-hand 'Questions about this deal' box (display only).
@@ -1633,9 +1672,14 @@ def lambda_handler(event, context):
         )
 
     deal_type = map_option_value('Type', mapped_fields.get('Type', []))
-    owner_iqf_yes = False
-    if deal_type == "Buy Order" and not is_closed_public:
-        owner_iqf_yes = fetch_person_iqf_yes((deal_data.get('primary_contact') or {}).get('id'))
+    # Primary contact, fetched ONCE: Buy orders use it for the Questions box's
+    # IQF check, Sell orders for the header verification marks.
+    primary_person = None
+    if deal_type in ("Buy Order", "Sell Order") and not is_closed_public:
+        primary_person = fetch_person((deal_data.get('primary_contact') or {}).get('id'))
+    owner_iqf_yes = deal_type == "Buy Order" and person_iqf_yes(primary_person)
+    if deal_type == "Sell Order" and stage_html:
+        stage_html += render_verification_marks(primary_person)
     qa_box_html = "" if is_closed_public else render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room, owner_iqf_yes, est_val=_est_val)
     _msg_raw = (deal_data.get('custom_fields') or {}).get('custom_label_4001285')
     hide_questions = (str(_msg_raw) == '7187011')
@@ -2054,6 +2098,10 @@ def lambda_handler(event, context):
             .status-inquiry  {{ color: var(--stage-amber); }}
             .status-obsolete {{ color: var(--neg); }}
             .status-neutral  {{ color: var(--text); }}
+            .verify-mark-wrap {{ white-space: nowrap; }}
+            .verify-mark {{ display: inline-block; color: var(--pos); font-weight: 600; font-size: 12px;
+                            line-height: 1.3; padding: 0 7px; border: 1px solid currentColor;
+                            border-radius: 999px; vertical-align: 1px; }}
             .deal-body {{ display:flex; gap:24px; align-items:flex-start; flex-wrap:wrap; }}
             .deal-main {{ flex:1; min-width:320px; }}
             .qa-box {{ width:300px; border:1px solid var(--border-strong); border-radius:8px;
