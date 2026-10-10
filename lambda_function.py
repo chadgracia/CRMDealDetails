@@ -2151,7 +2151,7 @@ def lambda_handler(event, context):
             .status-obsolete {{ color: var(--neg); }}
             .status-neutral  {{ color: var(--text); }}
             .onboard-status {{ white-space: nowrap; }}
-            .onboard-ok {{ color: var(--pos); }}
+            .onboard-ok {{ color: var(--pos); font-weight: 600; }}
             .deal-body {{ display:flex; gap:24px; align-items:flex-start; flex-wrap:wrap; }}
             .deal-main {{ flex:1; min-width:320px; }}
             .qa-box {{ width:300px; border:1px solid var(--border-strong); border-radius:8px;
