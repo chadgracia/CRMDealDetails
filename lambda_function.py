@@ -1158,16 +1158,18 @@ VERIFY_SELLER_ID_OK = {"6600515", "6600516"}        # CEF custom_label_3796440: 
 VERIFY_QUALIFICATION_OK = {"6496840", "6596073"}    # IQF custom_label_3763008: Yes / Unnecessary
 
 
-def render_verification_marks(person):
-    """'• ✓ Seller ID verified • ✓ Investor qualification on file' chips for the
-    header line after Status, or '' when none is earned / no person."""
+def render_verification_marks(person, deal_type="Sell Order"):
+    """Header chips after Status, or '' when none is earned / no person.
+    Sell Order: '✓ Seller ID verified', '✓ Investor qualification on file'.
+    Buy Order: '✓ Buyer qualification on file', '✓ Buyer ID verified'."""
     if not person:
         return ''
-    marks = []
-    if _person_cf_ids(person, "custom_label_3796440") & VERIFY_SELLER_ID_OK:
-        marks.append("Seller ID verified")
-    if _person_cf_ids(person, "custom_label_3763008") & VERIFY_QUALIFICATION_OK:
-        marks.append("Investor qualification on file")
+    id_ok = bool(_person_cf_ids(person, "custom_label_3796440") & VERIFY_SELLER_ID_OK)
+    qual_ok = bool(_person_cf_ids(person, "custom_label_3763008") & VERIFY_QUALIFICATION_OK)
+    if deal_type == "Buy Order":
+        marks = [m for m, ok in (("Buyer qualification on file", qual_ok), ("Buyer ID verified", id_ok)) if ok]
+    else:
+        marks = [m for m, ok in (("Seller ID verified", id_ok), ("Investor qualification on file", qual_ok)) if ok]
     return "".join(f'<span class="verify-mark-wrap"> &bull; <span class="verify-mark">&#10003; {m}</span></span>'
                    for m in marks)
 
@@ -1678,8 +1680,8 @@ def lambda_handler(event, context):
     if deal_type in ("Buy Order", "Sell Order") and not is_closed_public:
         primary_person = fetch_person((deal_data.get('primary_contact') or {}).get('id'))
     owner_iqf_yes = deal_type == "Buy Order" and person_iqf_yes(primary_person)
-    if deal_type == "Sell Order" and stage_html:
-        stage_html += render_verification_marks(primary_person)
+    if deal_type in ("Sell Order", "Buy Order") and stage_html:
+        stage_html += render_verification_marks(primary_person, deal_type)
     qa_box_html = "" if is_closed_public else render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room, owner_iqf_yes, est_val=_est_val)
     _msg_raw = (deal_data.get('custom_fields') or {}).get('custom_label_4001285')
     hide_questions = (str(_msg_raw) == '7187011')
