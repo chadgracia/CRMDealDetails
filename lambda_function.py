@@ -1145,7 +1145,8 @@ KYC_OK_IDS = {"6600515", "6600516"}
 ACCREDITATION_FIELD = "custom_label_3763008"  # IQF Status: Yes 6496840, Unnecessary 6596073
 ACCREDITATION_OK_IDS = {"6496840", "6596073"}
 KYC_TOOLTIP = "The seller has completed Rainmaker Securities' client onboarding (KYC)."
-ACCREDITATION_TOOLTIP = "The buyer has submitted an investor qualification form to Rainmaker Securities."
+ACCREDITATION_TOOLTIP = ("The buyer has submitted Rainmaker Securities' investor qualification form. "
+                         "The information is self-reported and not independently verified.")
 _people_slim_cache = {"etag": None, "checked_at": 0.0, "by_id": None}
 
 
@@ -1219,7 +1220,7 @@ def render_onboarding_status(deal_type, person_ids, index):
         label, good, tip = "Seller KYC", "Complete", KYC_TOOLTIP
     else:
         ok = any(f and f[1] for f in flags)
-        label, good, tip = "Buyer accreditation", "On file", ACCREDITATION_TOOLTIP
+        label, good, tip = "Investor Qualification Form", "Submitted", ACCREDITATION_TOOLTIP
     value = (f'<span class="onboard-ok">{good}</span>' if ok else 'Pending')
     return f'<span class="onboard-status" title="{html_mod.escape(tip, quote=True)}"> &bull; {label}: {value}</span>'
 
