@@ -38,7 +38,7 @@ QUESTION_CATALOG_BUYER = [   # shown on SELL orders (a buyer asking about the se
 ]
 QUESTION_CATALOG_SELLER = [  # shown on BUY orders (a seller asking about the buyer)
     {"id": "accept_bid",   "q": "Would you bid $___/share (gross)?",            "field": None},
-    {"id": "deadline",     "q": "When is the deadline to commit?",              "field": None},
+    {"id": "deadline",     "q": "How long is your buy order open?",             "field": None},
     {"id": "cash_on_hand", "q": "Do you have cash on hand?",                    "field": None},
     {"id": "qp_accredited","q": "What is your investor qualification level?",   "field": None},
     {"id": "iqf_done",     "q": "Have you completed the IQF with Rainmaker?",   "field": None},
@@ -1328,9 +1328,14 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=Tr
         if qid == "accept_bid":
             rows += (
                 '<div class="qa-bid">'
-                '<input type="number" name="bid_amount" step="any" placeholder="Bid $/share">'
+                '<input type="number" name="bid_amount" step="any" placeholder="Bid $/share (gross)">'
                 '<input type="number" name="bid_size" step="any" placeholder="Size $ (opt)">'
                 '</div>'
+                '<div class="qa-bid-note">'
+                + ("Gross = what the buyer pays. Your proceeds are net of commission."
+                   if deal_type == "Buy Order" else
+                   "Gross = the all-in price per share you'd pay.")
+                + '</div>'
             )
         if qid == "fee_structure":
             # Pre-fill with the deal's current fees; leave blank if missing (preserve 0).
@@ -2196,6 +2201,7 @@ def lambda_handler(event, context):
             .qa-row input[type=checkbox] {{ margin-top:3px; flex:none; }}
             .qa-bid {{ margin:2px 0 6px 26px; display:flex; gap:6px; }}
             .qa-bid input {{ width:50%; padding:5px; font-size:12px; box-sizing:border-box; }}
+            .qa-bid-note {{ margin:0 0 6px 26px; font-size:12px; color:var(--text-secondary); }}
             .qa-fees {{ margin:2px 0 6px 26px; display:flex; gap:6px; }}
             .qa-fees label {{ flex:1; display:flex; flex-direction:column; gap:2px; font-size:11px; color:var(--text-secondary); }}
             .qa-fees input {{ width:100%; padding:5px; font-size:12px; box-sizing:border-box; }}
