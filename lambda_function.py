@@ -995,11 +995,13 @@ def _seo_min_text(min_size):
         return ''
     if not n > 0:
         return ''
+    return f' Min. {_seo_money(n)}.'
+
+def _seo_money(n):
+    """100000 -> '$100K', 2500000 -> '$2.5M'."""
     if n >= 1_000_000:
-        amt = f'{n / 1_000_000:.1f}'.rstrip('0').rstrip('.') + 'M'
-    else:
-        amt = f'{n / 1_000:.1f}'.rstrip('0').rstrip('.') + 'K'
-    return f' Min. ${amt}.'
+        return '$' + f'{n / 1_000_000:.1f}'.rstrip('0').rstrip('.') + 'M'
+    return '$' + f'{n / 1_000:.1f}'.rstrip('0').rstrip('.') + 'K'
 
 def build_seo_description(deal_name, company_name, deal_type, structure, series_raw, min_size, is_closed):
     """Plain-text meta description, or None for skipped companies."""
@@ -1051,6 +1053,143 @@ def get_deal_stage_name(deal_data):
         if name.strip():
             return name.strip()
     return ''
+
+
+# --- Other live offers (non-live deal pages) --------------------------------
+LIVE_STAGES = {"firm", "matched", "inquiry"}
+_LIVE_STAGE_RANK = {"firm": 0, "matched": 1, "inquiry": 2}
+
+
+def _alt_num(v):
+    """Tolerant number parse ('$1,000,000' -> 1000000.0); None when missing/unparseable/<= 0."""
+    if v is None or isinstance(v, bool):
+        return None
+    try:
+        n = float(str(v).replace('$', '').replace(',', '').strip())
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def _alt_range(mn, mx):
+    lo, hi = _alt_num(mn), _alt_num(mx)
+    if lo is None and hi is None:
+        return None
+    lo = hi if lo is None else lo
+    hi = lo if hi is None else hi
+    return (min(lo, hi), max(lo, hi))
+
+
+def _alt_size_distance(a, b):
+    if a is None or b is None:
+        return None
+    if a[1] < b[0]:
+        return (b[0] - a[1]) / max(a[1], b[0])
+    if b[1] < a[0]:
+        return (a[0] - b[1]) / max(a[0], b[1])
+    return 0.0
+
+
+def _alt_struct_kind(structure):
+    s = str(structure or '')
+    if 'Fund' in s:
+        return 'spv'
+    if 'Direct' in s:
+        return 'direct'
+    return ''
+
+
+def live_alternatives(deals, deal_id, company_name, deal_type, cur_structure, cur_min, cur_max, limit=5):
+    """Live deals (Firm/Matched/Inquiry) on the same side in the same company,
+    best match first. Pure: no I/O."""
+    want_co = ' '.join(str(company_name or '').split()).lower()
+    if not want_co:
+        return []
+    cur_kind = _alt_struct_kind(cur_structure)
+    cur_rng = _alt_range(cur_min, cur_max)
+    cands = []
+    for d in deals or []:
+        if not isinstance(d, dict):
+            continue
+        if str(d.get('id')) == str(deal_id):
+            continue
+        if ' '.join(str(d.get('company') or '').split()).lower() != want_co:
+            continue
+        if (d.get('type') or '').strip() != deal_type:
+            continue
+        if (d.get('stage') or '').strip().lower() not in LIVE_STAGES:
+            continue
+        cands.append(d)
+
+    def _id_key(d):
+        i = str(d.get('id') or '')
+        return (0, int(i), '') if i.isdigit() else (1, 0, i)
+
+    # Stable sorts, least significant key first.
+    cands.sort(key=_id_key)
+    cands.sort(key=lambda d: _LIVE_STAGE_RANK.get((d.get('stage') or '').strip().lower(), 9))
+    cands.sort(key=lambda d: str(d.get('updated') or ''), reverse=True)
+
+    def _primary(d):
+        kind = _alt_struct_kind(d.get('structure'))
+        match = 0 if (cur_kind and kind == cur_kind) else 1
+        dist = _alt_size_distance(cur_rng, _alt_range(d.get('min_deal_size'), d.get('max_deal_size')))
+        return (match, 1 if dist is None else 0, dist or 0.0)
+    cands.sort(key=_primary)
+    return cands[:limit]
+
+
+def alt_live_link_text(d):
+    side = 'Buy' if (d.get('type') or '').strip() == 'Buy Order' else 'Sell'
+    parts = [side]
+    lo, hi = _alt_num(d.get('min_deal_size')), _alt_num(d.get('max_deal_size'))
+    if lo is not None and hi is not None:
+        parts.append(f'{_seo_money(lo)}–{_seo_money(hi)}')
+    elif lo is not None:
+        parts.append(f'from {_seo_money(lo)}')
+    elif hi is not None:
+        parts.append(f'up to {_seo_money(hi)}')
+    kind = _alt_struct_kind(d.get('structure'))
+    if kind == 'spv':
+        parts.append('SPV')
+    elif kind == 'direct':
+        parts.append('Direct Transfer')
+    return ' · '.join(parts)
+
+
+ALT_BOX_STYLE = ('margin:24px 0;padding:20px 22px;border:1px solid var(--border-strong,#d8d4ca);'
+                 'border-left:4px solid var(--accent,#3a5a75);border-radius:6px;background:#faf8f3')
+
+
+def render_alt_live_box(stage_lower, is_closed_public, alts, company_display, deal_type):
+    """Box under the header for non-live deals. '' when nothing to show."""
+    if not stage_lower or stage_lower in LIVE_STAGES:
+        return ''
+    co = html_mod.escape(str(company_display or ''), quote=True)
+    buy = deal_type == 'Buy Order'
+    items = ''.join(
+        f'<li><a href="{SIMILAR_TRADES_BASE}deal/{urllib.parse.quote(str(d.get("id")))}">'
+        f'{html_mod.escape(alt_live_link_text(d), quote=True)}</a></li>'
+        for d in alts)
+    list_html = f'<ul class="alt-live-list">{items}</ul>'
+    h2 = '<h2 style="margin:0 0 8px;font-size:20px">'
+    if stage_lower in CLOSED_STAGES and is_closed_public:
+        head = f'{h2}This allocation is no longer available</h2>\n'
+        if alts:
+            lead = f'Active buyers for {co}:' if buy else f'Live offers in {co}:'
+            body = f'  <p style="margin:0 0 8px;color:var(--text-secondary,#555)">{lead}</p>\n  {list_html}\n'
+        else:
+            body = """  <p style="margin:0 0 16px;color:var(--text-secondary,#555)">Search for similar opportunities, or view all live indications (sign-in required).</p>
+  <div style="display:flex;flex-wrap:wrap;gap:12px">
+    <a href="#" class="btn bid-btn" onclick="var b=document.getElementById('dealSwitcherBtn');if(b){b.click();}return false;">Search similar opportunities</a>
+    <a href="https://trades.graciagroup.com/" class="btn">View live indications</a>
+  </div>
+"""
+        return f'<div class="closed-banner" style="{ALT_BOX_STYLE}">\n  {head}{body}</div>\n'
+    if not alts:
+        return ''
+    title = f'Other active buyers for {co}' if buy else f'Other live offers in {co}'
+    return f'<div class="closed-banner" style="{ALT_BOX_STYLE}">\n  {h2}{title}</h2>\n  {list_html}\n</div>\n'
 
 
 STAGE_STATUS_CLASSES = {
@@ -1826,20 +1965,9 @@ def lambda_handler(event, context):
         return logo_url
 
 
-    closed_banner_html = ""
-    deal_main_inner = ""
-    if is_closed_public:
-        closed_banner_html = """<div class="closed-banner" style="margin:24px 0;padding:20px 22px;border:1px solid var(--border-strong,#d8d4ca);border-left:4px solid var(--accent,#3a5a75);border-radius:6px;background:#faf8f3">
-  <h2 style="margin:0 0 8px;font-size:20px">This allocation is no longer available</h2>
-  <p style="margin:0 0 16px;color:var(--text-secondary,#555)">Search for similar opportunities, or view all live indications (sign-in required).</p>
-  <div style="display:flex;flex-wrap:wrap;gap:12px">
-    <a href="#" class="btn bid-btn" onclick="var b=document.getElementById('dealSwitcherBtn');if(b){b.click();}return false;">Search similar opportunities</a>
-    <a href="https://trades.graciagroup.com/" class="btn">View live indications</a>
-  </div>
-</div>
-"""
-    else:
-        deal_main_inner = f"""{generate_table_html(table_data)}
+    # Closed public pages keep the full historical terms; weekly signup and
+    # news are already '' for them.
+    deal_main_inner = f"""{generate_table_html(table_data)}
 
         <div id="spvSection" style="display: {'' if map_option_value('Structure', mapped_fields.get('Structure', [])) == 'Fund' else 'none'}">
         <h2>SPV Details&thinsp;*</h2>
@@ -1852,6 +1980,27 @@ def lambda_handler(event, context):
             {news_html}
         </div>
 """
+
+    # Other live offers in the same company, for non-live stages.
+    alt_live_html = ""
+    _alt_stage = get_deal_stage_name(deal_data).strip().lower()
+    if _alt_stage and _alt_stage not in LIVE_STAGES:
+        try:
+            _alt_deals = _sim_load_deals()
+        except Exception as e:
+            logger.warning(f"alt-live: could not load deals: {e}")
+            _alt_deals = []
+        _alt_struct = map_option_value('Structure', mapped_fields.get('Structure', []))
+        if isinstance(_alt_struct, (list, tuple)):
+            _alt_struct = ', '.join(str(x) for x in _alt_struct)
+        _alt_type = map_option_value('Type', mapped_fields.get('Type', []))
+        _alts = live_alternatives(_alt_deals, deal_id, company_name, _alt_type, str(_alt_struct or ''),
+                                  mapped_fields.get('Min Deal Size'), mapped_fields.get('Max Deal Size'))
+        alt_live_html = render_alt_live_box(_alt_stage, is_closed_public, _alts,
+                                            _seo_company(deal_name, company_name) or company_name, _alt_type)
+
+    canonical_html = (f'<link rel="canonical" href="https://trades.graciagroup.com/deal/{deal_id}">'
+                      if str(deal_id).isdigit() else '')
 
     _seo_type = map_option_value('Type', mapped_fields.get('Type', []))
     _seo_structure = map_option_value('Structure', mapped_fields.get('Structure', []))
@@ -1885,6 +2034,7 @@ def lambda_handler(event, context):
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>{seo_title_html}</title>
         {seo_desc_meta}
+        {canonical_html}
         <link rel="stylesheet" href="https://s3.us-east-1.amazonaws.com/main.css/master.css">
         <style>
             /* Page-specific layout only. The shared Gracia look (font stack,
@@ -2334,6 +2484,8 @@ def lambda_handler(event, context):
                 text-decoration: underline;
             }}
             .deal-subline {{ font-size: 15px; color: var(--text-secondary); margin: 2px 0 4px; }}
+            .alt-live-list {{ margin: 0 0 12px; padding-left: 18px; }}
+            .alt-live-list li {{ margin: 4px 0; }}
         </style>
     </head>
     <body>
@@ -2363,12 +2515,13 @@ def lambda_handler(event, context):
             </div>
         </div>
         {bid_modal_html}
+        {alt_live_html}
         <div class="company-summary">{company_summary}</div>
         {catalyst_html}
 
         <div class="deal-body">
             <div class="deal-main">
-{closed_banner_html}{deal_main_inner}            </div>
+{deal_main_inner}            </div>
             {side_col_html}
         </div>
         <hr>
