@@ -940,9 +940,8 @@ SEO_SERIES_OPTS = {"5077840": "Seed", "5077843": "A", "5077846": "B", "5077849":
 SEO_SKIP_COMPANIES = {"anthropic"}
 SEO_NAME_OVERRIDES = {"1x": "1X Technologies"}
 
-def build_seo_title(deal_name, company_name, deal_type, structure, series_raw):
-    """Return the plain-text <title>, or None for skipped companies
-    (caller then keeps the original deal_name title)."""
+def _seo_company(deal_name, company_name):
+    """Cleaned company name for SEO text, or None for skipped/empty companies."""
     import re as _re
     raw = str(company_name or '')
     if not raw.strip() or raw.strip().lower() == 'unknown company':
@@ -956,16 +955,26 @@ def build_seo_title(deal_name, company_name, deal_type, structure, series_raw):
         if low == key or low.startswith(key + ' '):
             comp = val
             break
-    if not comp:
-        return None
-    if deal_type == 'Buy Order':
-        return f'Sell {comp} Pre-IPO Stock – Active Buyer'
-    # Series from deal field custom_label_3064333 (int, str, or list); SPV titles only
+    return comp or None
+
+def _seo_series_text(series_raw):
+    # Series from deal field custom_label_3064333 (int, str, or list)
     sv = series_raw
     if isinstance(sv, list):
         sv = sv[0] if sv else ''
     ser = SEO_SERIES_OPTS.get(str(sv).strip(), '') if sv not in (None, '') else ''
-    ser_txt = '' if not ser else ('Seed' if ser == 'Seed' else f'Series {ser}')
+    return '' if not ser else ('Seed' if ser == 'Seed' else f'Series {ser}')
+
+def build_seo_title(deal_name, company_name, deal_type, structure, series_raw):
+    """Return the plain-text <title>, or None for skipped companies
+    (caller then keeps the original deal_name title)."""
+    import re as _re
+    comp = _seo_company(deal_name, company_name)
+    if comp is None:
+        return None
+    if deal_type == 'Buy Order':
+        return f'Sell {comp} Pre-IPO Stock – Active Buyer'
+    ser_txt = _seo_series_text(series_raw)  # SPV titles only
     tokens = [t.strip() for t in str(structure or '').split(',')]
     if 'Fund' in tokens:
         suffix = f'{ser_txt} SPV Units'.strip()
@@ -977,6 +986,42 @@ def build_seo_title(deal_name, company_name, deal_type, structure, series_raw):
         suffix = ''
     title = f'{comp} Pre-IPO Stock' + (f' – {suffix}' if suffix else '')
     return _re.sub(r'\s+', ' ', title).strip()
+
+def _seo_min_text(min_size):
+    """' Min. $100K.' / ' Min. $2.5M.', or '' when missing, non-numeric or <= 0."""
+    try:
+        n = float(str(min_size).replace(',', '').replace('$', '').strip())
+    except (TypeError, ValueError):
+        return ''
+    if not n > 0:
+        return ''
+    if n >= 1_000_000:
+        amt = f'{n / 1_000_000:.1f}'.rstrip('0').rstrip('.') + 'M'
+    else:
+        amt = f'{n / 1_000:.1f}'.rstrip('0').rstrip('.') + 'K'
+    return f' Min. ${amt}.'
+
+def build_seo_description(deal_name, company_name, deal_type, structure, series_raw, min_size, is_closed):
+    """Plain-text meta description, or None for skipped companies."""
+    import re as _re
+    comp = _seo_company(deal_name, company_name)
+    if comp is None:
+        return None
+    ser_txt = _seo_series_text(series_raw)
+    min_txt = _seo_min_text(min_size)
+    tokens = [t.strip() for t in str(structure or '').split(',')]
+    cta = ' Ask the seller questions or place a bid.'
+    if is_closed:
+        desc = f'This {comp} allocation has closed. See current pre-IPO offers in similar companies.'
+    elif deal_type == 'Buy Order':
+        desc = f'Active buyer for {comp} pre-IPO shares. Shareholders can submit an offer.'
+    elif 'Fund' in tokens:
+        desc = f'{comp} {ser_txt} SPV units for accredited investors.{min_txt}{cta}'
+    elif 'Direct' in tokens or 'Direct Only' in tokens:
+        desc = f'{comp} pre-IPO shares by direct transfer for accredited investors.{min_txt}{cta}'
+    else:
+        desc = f'{comp} pre-IPO stock for accredited investors.{min_txt}{cta}'
+    return _re.sub(r' {2,}', ' ', desc).strip()
 
 # --- Deal stage ------------------------------------------------------------
 # PipelineCRM carries the stage on the deal itself. It normally arrives as a
@@ -1812,6 +1857,19 @@ def lambda_handler(event, context):
     _seo_structure = map_option_value('Structure', mapped_fields.get('Structure', []))
     seo_title = build_seo_title(deal_name, company_name, str(_seo_type or ''), str(_seo_structure or ''), custom_fields.get('custom_label_3064333'))
     seo_title_html = html_mod.escape(seo_title, quote=True) if seo_title else deal_name
+    seo_desc = build_seo_description(deal_name, company_name, str(_seo_type or ''), str(_seo_structure or ''), custom_fields.get('custom_label_3064333'), mapped_fields.get('Min Deal Size'), is_closed_public)
+    seo_desc_meta = f'<meta name="description" content="{html_mod.escape(seo_desc, quote=True)}">' if seo_desc else ''
+    _struct_desc = get_structure_description(map_option_value('Structure', mapped_fields.get('Structure', [])))
+    if seo_title is not None:
+        _dn = str(deal_name or '')
+        _sub = _dn.split(':', 1)[1].strip() if ':' in _dn else _dn.strip()
+        if _struct_desc:
+            _sd = _struct_desc[3:] if _struct_desc.startswith(' - ') else _struct_desc
+            _sub = f'{_sub} · {_sd}' if _sub else _sd
+        h1_html = (f'<h1><strong>{seo_title_html}</strong></h1>\n'
+                   f'                <div class="deal-subline">{html_mod.escape(_sub, quote=True)}</div>')
+    else:
+        h1_html = f'<h1><strong>{deal_name}{_struct_desc}</strong></h1>'
 
     ga_head_html = '' if _is_admin else (
         '<script async src="https://www.googletagmanager.com/gtag/js?id=G-L9JN3TRR2S"></script>'
@@ -1826,6 +1884,7 @@ def lambda_handler(event, context):
         {ga_head_html}
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>{seo_title_html}</title>
+        {seo_desc_meta}
         <link rel="stylesheet" href="https://s3.us-east-1.amazonaws.com/main.css/master.css">
         <style>
             /* Page-specific layout only. The shared Gracia look (font stack,
@@ -2274,13 +2333,14 @@ def lambda_handler(event, context):
                 font-size: 14px;
                 text-decoration: underline;
             }}
+            .deal-subline {{ font-size: 15px; color: var(--text-secondary); margin: 2px 0 4px; }}
         </style>
     </head>
     <body>
         {top_nav_html}
         <div class="header">
             <div class="header-content">
-                <h1><strong>{deal_name}{get_structure_description(map_option_value('Structure', mapped_fields.get('Structure', [])))}</strong></h1>
+                {h1_html}
                 <div class="deal-id">Deal ID: {deal_id} <span class="copy-id" onclick="copyDealId('{deal_id}', this)" title="Copy Deal ID"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></span> (Updated: {format_date(deal_data.get('updated_at', ''))}){stage_html}</div>
                 <script>
                 function copyDealId(id, el) {{
