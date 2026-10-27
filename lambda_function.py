@@ -9,6 +9,7 @@ import time
 import base64
 import hmac
 import hashlib
+import re
 from datetime import datetime, timedelta  # NEW: Import for date handling
 
 API_KEY = "defe67185ffd4993874558be8c4eb29b"  # Your actual NewsAPI key
@@ -1331,7 +1332,22 @@ ACCREDITATION_OK_IDS = {"6496840", "6596073"}
 KYC_TOOLTIP = "The seller has completed Rainmaker Securities' client onboarding (KYC)."
 ACCREDITATION_TOOLTIP = ("The buyer has submitted Rainmaker Securities' investor qualification form. "
                          "The information is self-reported and not independently verified.")
-_people_slim_cache = {"etag": None, "checked_at": 0.0, "by_id": None}
+_people_slim_cache = {"etag": None, "checked_at": 0.0, "by_id": None, "by_email": None}
+
+
+def _person_emails(p):
+    """Lowercased emails on a person record: every top-level email* field
+    (string, list of strings, or list of {"email": ...} dicts)."""
+    out = set()
+    for k, v in p.items():
+        if not isinstance(k, str) or not k.lower().startswith("email"):
+            continue
+        for item in (v if isinstance(v, list) else [v]):
+            if isinstance(item, dict):
+                item = item.get("email") or item.get("address") or item.get("value")
+            if isinstance(item, str) and "@" in item:
+                out.add(item.strip().lower())
+    return out
 
 
 def _cf_option_ids(value):
@@ -1363,13 +1379,17 @@ def _people_slim_status_index():
         obj = s3.get_object(Bucket=PEOPLE_SLIM_BUCKET, Key=PEOPLE_SLIM_KEY)
         data = json.loads(obj["Body"].read())
         by_id = {}
+        by_email = {}
         for p in (data.get("people") or []) if isinstance(data, dict) else []:
             if not isinstance(p, dict) or p.get("id") is None:
                 continue
             cf = p.get("custom_fields") or {}
             by_id[str(p["id"])] = (bool(_cf_option_ids(cf.get(KYC_FIELD)) & KYC_OK_IDS),
                                    bool(_cf_option_ids(cf.get(ACCREDITATION_FIELD)) & ACCREDITATION_OK_IDS))
-        cache.update({"etag": etag or obj.get("ETag"), "checked_at": now, "by_id": by_id})
+            for em in _person_emails(p):
+                by_email.setdefault(em, set()).add(str(p["id"]))
+        cache.update({"etag": etag or obj.get("ETag"), "checked_at": now, "by_id": by_id,
+                      "by_email": by_email})
         return by_id
     except Exception as e:
         logger.warning(f"people-slim.json read failed (status item hidden): {type(e).__name__}: {e}")
@@ -1603,6 +1623,254 @@ def test_news_api(company_name, max_articles=5):
 if __name__ == "__main__":
     news_data = test_news_api("SpaceX")
     print(news_data)
+
+# --- Partner Desk pop-up ----------------------------------------------------
+# Intermediaries (co-brokers / foreign finders) arriving with a signed handoff
+# token (?gp= or the gg_pd cookie) get a blocking overlay after 5s. Everything
+# here is additive: it runs only when gp / gg_pd / pd_preview is present, reads
+# S3 only (never writes), and any failure returns the normal page unchanged.
+PD_SECRET_BUCKET = "pipeline-token"
+PD_SECRET_KEY = "partner-desk-secret.json"
+PD_ACCESS_BUCKET = "full-pipeline-cache"
+PD_ACCESS_KEY = "partner-desk/access.json"
+PD_ACCESS_TTL_SECONDS = 15 * 60
+PD_EXCLUDED_PD = {7218523, 7218528}   # Investor, Partner – Registered
+PD_COOKIE = "gg_pd"
+PD_COOKIE_MAX_AGE = 2592000
+PD_BEACON_URL = "https://bddpwqsqvt32ritxpjqlqwhaim0ykbol.lambda-url.us-east-1.on.aws/?view=pd-event"
+PD_FULL_BOOK_URL = "https://trades.graciagroup.com/?view=partner-desk"
+PD_IQF_INDIVIDUAL_URL = "https://www.rainmakersecurities.com/investor-qualification-form-for-natural-persons"
+PD_IQF_ENTITY_URL = "https://www.rainmakersecurities.com/investor-qualification-form-for-entity-persons"
+PD_LEAVE_URL = "https://www.graciagroup.com"
+_PD_TOKEN_RE = re.compile(r"^([A-Za-z0-9_-]{1,64})\.(\d{1,12})\.([0-9a-f]{32})$")
+_pd_secret_cache = {"secret": None}
+_pd_access_cache = {"people": None, "loaded_at": 0.0}
+
+
+def _pd_load_secret():
+    """(secret, None) or (None, reason). Read-only; cached once read."""
+    if _pd_secret_cache["secret"]:
+        return _pd_secret_cache["secret"], None
+    try:
+        obj = boto3.client('s3').get_object(Bucket=PD_SECRET_BUCKET, Key=PD_SECRET_KEY)
+        secret = json.loads(obj['Body'].read()).get("secret")
+        if not isinstance(secret, str) or not secret:
+            return None, "no 'secret' string in file"
+        _pd_secret_cache["secret"] = secret
+        return secret, None
+    except Exception as e:
+        return None, f"{type(e).__name__}: {e}"
+
+
+def _pd_load_access():
+    """(people dict, None) or (None, reason). Cached PD_ACCESS_TTL_SECONDS."""
+    now = time.time()
+    if _pd_access_cache["people"] is not None and now - _pd_access_cache["loaded_at"] < PD_ACCESS_TTL_SECONDS:
+        return _pd_access_cache["people"], None
+    try:
+        obj = boto3.client('s3').get_object(Bucket=PD_ACCESS_BUCKET, Key=PD_ACCESS_KEY)
+        data = json.loads(obj['Body'].read())
+        people = data.get("people") if isinstance(data, dict) else None
+        if not isinstance(people, dict):
+            return None, "no 'people' object in file"
+        _pd_access_cache.update({"people": people, "loaded_at": now})
+        return people, None
+    except Exception as e:
+        return None, f"{type(e).__name__}: {e}"
+
+
+def _pd_verify_token(token, secret):
+    """pid when token is 'pid.exp.sig', unexpired and correctly signed; else (None, reason)."""
+    m = _PD_TOKEN_RE.match(token or "")
+    if not m:
+        return None, "malformed token"
+    pid, exp, sig = m.group(1), m.group(2), m.group(3)
+    if int(exp) <= int(time.time()):
+        return None, "expired token"
+    expected = hmac.new(secret.encode(), f"{pid}|{exp}".encode(), hashlib.sha256).hexdigest()[:32]
+    if not hmac.compare_digest(expected, sig):
+        return None, "bad signature"
+    return pid, None
+
+
+def _pd_is_intermediary(rec):
+    if not isinstance(rec, dict) or rec.get("intermediary") is not True:
+        return False
+    pd_val = rec.get("pd")
+    try:
+        pd_num = int(pd_val) if pd_val is not None else None
+    except (TypeError, ValueError):
+        pd_num = None
+    return pd_num not in PD_EXCLUDED_PD
+
+
+def _pd_gg_id_matches(email, pid, rec):
+    """True only when the signed-in gg_id email provably belongs to pid."""
+    em = email.strip().lower()
+    if isinstance(rec, dict) and em in _person_emails(rec):
+        return True
+    _people_slim_status_index()   # refreshes _people_slim_cache (fail-soft)
+    by_email = _people_slim_cache.get("by_email")
+    if not by_email:
+        return False              # no comparison possible -> mismatch
+    return str(pid) in by_email.get(em, ())
+
+
+def _pd_cookie(value, max_age):
+    return f"{PD_COOKIE}={value}; Path=/; Max-Age={max_age}; Secure; HttpOnly; SameSite=Lax"
+
+
+def _pd_js_str(v):
+    """JSON string literal safe inside an inline <script>."""
+    return (json.dumps(str(v)).replace("<", "\\u003c").replace(">", "\\u003e")
+            .replace("&", "\\u0026"))
+
+
+def _pd_render_popup(token, deal_id, banner_html=""):
+    """Overlay + script appended before </body>. Shown after 5s; no close."""
+    book_href = PD_FULL_BOOK_URL + (f"&gp={urllib.parse.quote(token, safe='')}" if token else "")
+    esc = lambda u: html_mod.escape(u, quote=True)
+    css = """
+<style>
+#pdOverlay{display:none;position:fixed;inset:0;z-index:2147483000;background:rgba(20,24,30,.55);
+  align-items:center;justify-content:center;padding:16px;box-sizing:border-box;overflow-y:auto}
+html.pd-on #pdOverlay{display:flex}
+html.pd-on,html.pd-on body{overflow:hidden}
+html.pd-on body>*:not(#pdOverlay):not(#pdPreviewBanner){filter:blur(8px);pointer-events:none;user-select:none}
+#pdCard{background:#fff;border-radius:10px;max-width:440px;width:100%;box-sizing:border-box;
+  padding:28px 26px 22px;box-shadow:0 12px 40px rgba(0,0,0,.3);font-family:inherit;color:var(--text,#222);text-align:center}
+#pdCard h2{margin:0 0 12px;font-size:20px;line-height:1.3;color:var(--text,#222)}
+#pdCard p{margin:0 0 20px;font-size:15px;line-height:1.5;color:var(--text-secondary,#555)}
+#pdCard .pd-primary{display:block;padding:12px 16px;border-radius:6px;background:var(--accent,#3a5a75);
+  color:#fff;font-weight:600;font-size:15px;text-decoration:none}
+#pdCard .pd-primary:hover{filter:brightness(1.1)}
+#pdCard .pd-label{margin:20px 0 8px;font-size:13px;font-weight:600;color:var(--text-secondary,#555)}
+#pdCard .pd-row{display:flex;gap:10px}
+#pdCard .pd-secondary{flex:1;padding:10px 12px;border-radius:6px;border:1px solid var(--accent,#3a5a75);
+  color:var(--accent,#3a5a75);background:#fff;font-weight:600;font-size:14px;text-decoration:none}
+#pdCard .pd-secondary:hover{background:#f3f6f9}
+#pdCard .pd-leave{display:inline-block;margin-top:18px;font-size:12px;color:var(--text-secondary,#777);text-decoration:underline}
+#pdPreviewBanner{position:fixed;top:0;left:0;right:0;z-index:2147483001;background:#fff4c2;color:#5a4500;
+  border-bottom:1px solid #e0c96a;font:12px/1.4 monospace;padding:6px 16px;word-break:break-word}
+</style>"""
+    html_part = (
+        banner_html
+        + '<div id="pdOverlay" role="dialog" aria-modal="true" aria-labelledby="pdTitle">'
+        '<div id="pdCard">'
+        '<h2 id="pdTitle">This deal is not available to co-brokers or foreign finders.</h2>'
+        "<p>Our records show you as an intermediary. If you&rsquo;re investing directly, "
+        "complete Rainmaker&rsquo;s investor qualification form and we&rsquo;ll update your record.</p>"
+        f'<a class="pd-primary" data-pd="partner_desk" href="{esc(book_href)}">See how to access the full book</a>'
+        '<div class="pd-label">I&rsquo;m a direct investor</div>'
+        '<div class="pd-row">'
+        f'<a class="pd-secondary" data-pd="iqf_individual" href="{esc(PD_IQF_INDIVIDUAL_URL)}" target="_blank" rel="noopener">Individual</a>'
+        f'<a class="pd-secondary" data-pd="iqf_entity" href="{esc(PD_IQF_ENTITY_URL)}" target="_blank" rel="noopener">Entity</a>'
+        '</div>'
+        f'<a class="pd-leave" data-pd="leave" href="{esc(PD_LEAVE_URL)}">Leave</a>'
+        '</div></div>'
+    )
+    js = """
+<script>
+(function(){
+  var TOKEN = __TOKEN__, DID = __DID__, BEACON = __BEACON__;
+  setTimeout(function(){ document.documentElement.classList.add('pd-on'); }, 5000);
+  var links = document.querySelectorAll('#pdOverlay a[data-pd]');
+  for (var i = 0; i < links.length; i++) {
+    links[i].addEventListener('click', function(){
+      if (!TOKEN) return;
+      try { navigator.sendBeacon(BEACON, JSON.stringify({gp: TOKEN, action: this.getAttribute('data-pd'), did: DID})); } catch (e) {}
+    });
+  }
+})();
+</script>"""
+    js = (js.replace("__TOKEN__", _pd_js_str(token or ""))
+            .replace("__DID__", _pd_js_str(deal_id))
+            .replace("__BEACON__", _pd_js_str(PD_BEACON_URL)))
+    return css + html_part + js
+
+
+def _pd_preview_banner():
+    secret, s_err = _pd_load_secret()
+    people, a_err = _pd_load_access()
+    s_txt = "OK" if secret else f"FAIL ({s_err})"
+    a_txt = f"OK ({len(people)} people)" if people is not None else f"FAIL ({a_err})"
+    return ('<div id="pdPreviewBanner">PD preview &mdash; secret: '
+            + html_mod.escape(s_txt) + ', access.json: ' + html_mod.escape(a_txt) + '</div>')
+
+
+def _pd_decide(event, qp):
+    """None for a normal visitor, else {"popup": bool, "token": str,
+    "cookie": Set-Cookie value or None, "banner": html}."""
+    if (qp.get('pd_preview') == '1' and ADMIN_KEY and qp.get('key')
+            and hmac.compare_digest(qp['key'].encode(), ADMIN_KEY.encode())):
+        return {"popup": True, "token": "", "cookie": None, "banner": _pd_preview_banner()}
+
+    q_token = qp.get('gp')
+    c_token = _get_cookie(event, PD_COOKIE)
+    token = q_token or c_token
+    if not token:
+        return None
+    secret, err = _pd_load_secret()
+    if not secret:
+        logger.warning(f"pd: secret unavailable: {err}")
+        return None
+    pid, err = _pd_verify_token(token, secret)
+    if not pid:
+        logger.info(f"pd: {err} ({'query' if q_token else 'cookie'})")
+        return None
+
+    email = _read_identity_email(event)
+    people, a_err = (None, None)
+    if email:
+        people, a_err = _pd_load_access()
+        rec = (people or {}).get(pid)
+        if not _pd_gg_id_matches(email, pid, rec):
+            logger.info("pd: token/gg_id mismatch")
+            if c_token:
+                return {"popup": False, "token": "", "cookie": _pd_cookie("", 0), "banner": ""}
+            return None
+
+    if people is None:
+        people, a_err = _pd_load_access()
+    if people is None:
+        logger.warning(f"pd: access.json unavailable: {a_err}")
+        return None
+    rec = people.get(pid)
+    if not _pd_is_intermediary(rec):
+        logger.info("pd: not shown (" + ("not in access.json" if rec is None else "not an eligible intermediary") + ")")
+        return None
+    set_cookie = _pd_cookie(token, PD_COOKIE_MAX_AGE) if q_token else None
+    return {"popup": True, "token": token, "cookie": set_cookie, "banner": ""}
+
+
+def _pd_apply(event, qp, deal_id, response):
+    """The response, plus the pop-up / gg_pd cookie when warranted. Any error
+    returns the original response untouched."""
+    try:
+        d = _pd_decide(event, qp)
+        if not d or (not d["popup"] and not d["cookie"]):
+            return response
+        out = dict(response)
+        headers = dict(response.get('headers') or {})
+        headers['Cache-Control'] = 'private, no-store'
+        if d["popup"]:
+            body = response['body']
+            i = body.rfind('</body>')
+            if i < 0:
+                return response
+            out['body'] = body[:i] + _pd_render_popup(d["token"], deal_id, d["banner"]) + body[i:]
+            logger.info("pd: pop-up shown" + (" (preview)" if d["banner"] else ""))
+        if d["cookie"]:
+            if event.get('version') == '2.0' or 'rawPath' in event or 'cookies' in event:
+                out['cookies'] = [d["cookie"]]
+            else:
+                headers['Set-Cookie'] = d["cookie"]
+        out['headers'] = headers
+        return out
+    except Exception as e:
+        logger.warning(f"pd: failed, normal page served: {type(e).__name__}: {e}")
+        return response
+
 
 def lambda_handler(event, context):
     logger.info("Lambda function started")
@@ -2539,8 +2807,9 @@ def lambda_handler(event, context):
     </html>
     """
     
-    return {
+    response = {
         'statusCode': 200,
         'headers': {'Content-Type': 'text/html'},
         'body': html_content
-    }   
+    }
+    return _pd_apply(event, _qp, deal_id, response)   
