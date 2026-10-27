@@ -1643,40 +1643,58 @@ PD_IQF_INDIVIDUAL_URL = "https://www.rainmakersecurities.com/investor-qualificat
 PD_IQF_ENTITY_URL = "https://www.rainmakersecurities.com/investor-qualification-form-for-entity-persons"
 PD_LEAVE_URL = "https://www.graciagroup.com"
 _PD_TOKEN_RE = re.compile(r"^([A-Za-z0-9_-]{1,64})\.(\d{1,12})\.([0-9a-f]{32})$")
-_pd_secret_cache = {"secret": None}
-_pd_access_cache = {"people": None, "loaded_at": 0.0}
+PD_RETRY_SECONDS = 60
+_pd_secret_cache = {"secret": None, "failed_at": 0.0, "error": None}
+_pd_access_cache = {"people": None, "loaded_at": 0.0, "failed_at": 0.0, "error": None}
 
 
 def _pd_load_secret():
-    """(secret, None) or (None, reason). Read-only; cached once read."""
-    if _pd_secret_cache["secret"]:
-        return _pd_secret_cache["secret"], None
+    """(secret, None) or (None, reason). Read-only; cached once read. A failed
+    read is retried at most once every PD_RETRY_SECONDS."""
+    cache = _pd_secret_cache
+    if cache["secret"]:
+        return cache["secret"], None
+    now = time.time()
+    if cache["failed_at"] and now - cache["failed_at"] < PD_RETRY_SECONDS:
+        return None, f"{cache['error']} (retry pending)"
     try:
         obj = boto3.client('s3').get_object(Bucket=PD_SECRET_BUCKET, Key=PD_SECRET_KEY)
         secret = json.loads(obj['Body'].read()).get("secret")
         if not isinstance(secret, str) or not secret:
-            return None, "no 'secret' string in file"
-        _pd_secret_cache["secret"] = secret
-        return secret, None
+            raise ValueError("no 'secret' string in file")
     except Exception as e:
-        return None, f"{type(e).__name__}: {e}"
+        cache.update({"failed_at": now, "error": f"{type(e).__name__}: {e}"})
+        return None, cache["error"]
+    cache.update({"secret": secret, "failed_at": 0.0, "error": None})
+    return secret, None
 
 
 def _pd_load_access():
-    """(people dict, None) or (None, reason). Cached PD_ACCESS_TTL_SECONDS."""
+    """(people dict, None) or (None, reason). A good load is cached
+    PD_ACCESS_TTL_SECONDS; a failed load is retried after PD_RETRY_SECONDS,
+    and any previous good copy keeps being used until a refresh succeeds."""
+    cache = _pd_access_cache
     now = time.time()
-    if _pd_access_cache["people"] is not None and now - _pd_access_cache["loaded_at"] < PD_ACCESS_TTL_SECONDS:
-        return _pd_access_cache["people"], None
+    if cache["people"] is not None and now - cache["loaded_at"] < PD_ACCESS_TTL_SECONDS:
+        return cache["people"], None
+    if cache["failed_at"] and now - cache["failed_at"] < PD_RETRY_SECONDS:
+        if cache["people"] is not None:
+            return cache["people"], None
+        return None, f"{cache['error']} (retry pending)"
     try:
         obj = boto3.client('s3').get_object(Bucket=PD_ACCESS_BUCKET, Key=PD_ACCESS_KEY)
         data = json.loads(obj['Body'].read())
         people = data.get("people") if isinstance(data, dict) else None
         if not isinstance(people, dict):
-            return None, "no 'people' object in file"
-        _pd_access_cache.update({"people": people, "loaded_at": now})
-        return people, None
+            raise ValueError("no 'people' object in file")
     except Exception as e:
-        return None, f"{type(e).__name__}: {e}"
+        cache.update({"failed_at": now, "error": f"{type(e).__name__}: {e}"})
+        if cache["people"] is not None:
+            logger.warning(f"pd: access.json refresh failed, using previous copy: {cache['error']}")
+            return cache["people"], None
+        return None, cache["error"]
+    cache.update({"people": people, "loaded_at": now, "failed_at": 0.0, "error": None})
+    return people, None
 
 
 def _pd_verify_token(token, secret):

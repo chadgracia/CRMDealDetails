@@ -27,8 +27,10 @@ class FakeS3:
     """get_object/head_object from OBJECTS; every other call is recorded as a write."""
     objects = {}
     writes = []
+    gets = []
 
     def get_object(self, Bucket, Key):
+        FakeS3.gets.append(Key)
         if (Bucket, Key) not in self.objects:
             raise NoSuchKey(f"{Bucket}/{Key}")
         return {"Body": io.BytesIO(json.dumps(self.objects[(Bucket, Key)]).encode()),
@@ -116,8 +118,9 @@ def reset(secret=True, access=True, slim=None):
                     OTHER: {"intermediary": False, "pd": None}})
     if slim is not None:
         FakeS3.objects[("full-pipeline-cache", "syndicate-dash/people-slim.json")] = {"people": slim}
-    lf._pd_secret_cache["secret"] = None
-    lf._pd_access_cache.update({"people": None, "loaded_at": 0.0})
+    lf._pd_secret_cache.update({"secret": None, "failed_at": 0.0, "error": None})
+    lf._pd_access_cache.update({"people": None, "loaded_at": 0.0, "failed_at": 0.0, "error": None})
+    FakeS3.gets.clear()
     lf._people_slim_cache.update({"etag": None, "checked_at": 0.0, "by_id": None, "by_email": None})
     FakeS3.writes.clear()
 
@@ -271,6 +274,75 @@ class PartnerDeskTests(unittest.TestCase):
             self.assertBaseline(run({"gp": tok()}))
         finally:
             lf._pd_render_popup = orig
+
+    # --- secret / access.json caching ---
+    def age(self, cache, field, seconds):
+        cache[field] -= seconds
+
+    def test_secret_missing_then_present_after_retry(self):
+        reset(secret=False)
+        t = tok()
+        self.assertBaseline(run({"gp": t}))
+        FakeS3.objects[("pipeline-token", "partner-desk-secret.json")] = {"secret": SECRET}
+        self.assertBaseline(run({"gp": t}))          # within 60s: no re-read
+        self.assertEqual(FakeS3.gets.count("partner-desk-secret.json"), 1)
+        self.age(lf._pd_secret_cache, "failed_at", 61)
+        self.assertIn('id="pdOverlay"', run({"gp": t})["body"])
+        self.assertEqual(FakeS3.gets.count("partner-desk-secret.json"), 2)
+
+    def test_secret_read_once_and_cached(self):
+        for _ in range(3):
+            self.assertIn('id="pdOverlay"', run({"gp": tok()})["body"])
+        self.assertEqual(FakeS3.gets.count("partner-desk-secret.json"), 1)
+
+    def test_secret_failure_not_permanent_after_access_denied(self):
+        orig = FakeS3.get_object
+        def denied(self_, Bucket, Key):
+            if Key == "partner-desk-secret.json":
+                FakeS3.gets.append(Key)
+                raise PermissionError("AccessDenied")
+            return orig(self_, Bucket, Key)
+        FakeS3.get_object = denied
+        try:
+            self.assertBaseline(run({"gp": tok()}))
+        finally:
+            FakeS3.get_object = orig
+        self.age(lf._pd_secret_cache, "failed_at", 61)
+        self.assertIn('id="pdOverlay"', run({"gp": tok()})["body"])
+
+    def test_access_failure_retried_after_60s(self):
+        reset(access=False)
+        t = tok()
+        self.assertBaseline(run({"gp": t}))
+        reset_access = lambda: set_access({PID: {"intermediary": True, "pd": None}})
+        reset_access()
+        self.assertBaseline(run({"gp": t}))          # within 60s: no re-read
+        self.assertEqual(FakeS3.gets.count("partner-desk/access.json"), 1)
+        self.age(lf._pd_access_cache, "failed_at", 61)
+        self.assertIn('id="pdOverlay"', run({"gp": t})["body"])
+        self.assertEqual(FakeS3.gets.count("partner-desk/access.json"), 2)
+
+    def test_access_good_copy_cached_15_min(self):
+        t = tok()
+        run({"gp": t}); run({"gp": t})
+        self.assertEqual(FakeS3.gets.count("partner-desk/access.json"), 1)
+        self.age(lf._pd_access_cache, "loaded_at", 15 * 60 + 1)
+        run({"gp": t})
+        self.assertEqual(FakeS3.gets.count("partner-desk/access.json"), 2)
+
+    def test_access_failure_keeps_previous_copy(self):
+        t = tok()
+        self.assertIn('id="pdOverlay"', run({"gp": t})["body"])
+        FakeS3.objects.pop(("full-pipeline-cache", "partner-desk/access.json"))
+        self.age(lf._pd_access_cache, "loaded_at", 15 * 60 + 1)
+        self.assertIn('id="pdOverlay"', run({"gp": t})["body"])   # refresh fails, old copy used
+        self.assertEqual(FakeS3.gets.count("partner-desk/access.json"), 2)
+        self.assertIn('id="pdOverlay"', run({"gp": t})["body"])   # within 60s: no re-read
+        self.assertEqual(FakeS3.gets.count("partner-desk/access.json"), 2)
+        set_access({PID: {"intermediary": False, "pd": None}})
+        self.age(lf._pd_access_cache, "failed_at", 61)
+        self.assertBaseline(run({"gp": t}))                         # refresh succeeds, new copy used
+        self.assertEqual(FakeS3.gets.count("partner-desk/access.json"), 3)
 
     # helpers
     def baseline_signed_in(self, email, slim):
