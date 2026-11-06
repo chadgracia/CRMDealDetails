@@ -22,6 +22,7 @@ NEWS_SKIP_COMPANIES = {
 }
 
 QUESTION_CATALOG_BUYER = [   # shown on SELL orders (a buyer asking about the seller)
+    {"id": "still_active", "q": "Is this order still active?", "field": None},
     {"id": "accept_bid",   "q": "Would you accept a bid of $___/share (gross)?",                    "field": None},
     {"id": "deadline",     "q": "When is the deadline to commit?",                                  "field": None},
     {"id": "class",        "q": "Are these shares common or preferred?",                            "field": "Class"},
@@ -38,6 +39,7 @@ QUESTION_CATALOG_BUYER = [   # shown on SELL orders (a buyer asking about the se
     {"id": "direct_trade", "q": "Do you have company permission to directly transfer?",              "field": None},
 ]
 QUESTION_CATALOG_SELLER = [  # shown on BUY orders (a seller asking about the buyer)
+    {"id": "still_active", "q": "Is this order still active?", "field": None},
     {"id": "accept_bid",   "q": "Would you bid $___/share (gross)?",            "field": None},
     {"id": "deadline",     "q": "How long is your buy order open?",             "field": None},
     {"id": "cash_on_hand", "q": "Do you have cash on hand?",                    "field": None},
@@ -1429,7 +1431,90 @@ def render_onboarding_status(deal_type, person_ids, index):
     return f'<span class="onboard-status" title="{html_mod.escape(tip, quote=True)}"> &bull; {label}: {value}</span>'
 
 
-def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=True, owner_iqf_yes=False, est_val=None):
+# --- Unconfirmed rule (shared across repos) ----------------------------------
+LAST_CONFIRMED_FIELD = "custom_label_4012491"   # "YYYY/MM/DD"
+REFRESH_FIELD        = "custom_label_3994687"   # days; 0 = never Unconfirmed
+SELLER_ROLE_FIELD    = "custom_label_3938748"
+SELLER_ROLE_GP_ALLOC = "7020357"                # GP — syndicating new allocation
+MESSAGING_FIELD      = "custom_label_4001285"
+MESSAGING_ALLOW      = "7187010"
+HOLD_STAGE_ID        = "2094373"
+UNCONFIRMED_CLOSED_STAGES = CLOSED_STAGES | {"trade broken", "archived"}
+
+
+def _deal_stage_id(deal_data):
+    v = deal_data.get('deal_stage')
+    if isinstance(v, dict) and v.get('id') is not None:
+        return str(v.get('id'))
+    if deal_data.get('deal_stage_id') is not None:
+        return str(deal_data.get('deal_stage_id'))
+    return ''
+
+
+def unconfirmed_status(deal_data, today=None):
+    """(is_unconfirmed, last_confirmed_date_or_None). Fail-soft: any missing or
+    unparseable input that the rule needs returns (False, None)."""
+    try:
+        stage = get_deal_stage_name(deal_data).strip().lower()
+        if (_deal_stage_id(deal_data) == HOLD_STAGE_ID or stage == "hold"
+                or stage in UNCONFIRMED_CLOSED_STAGES
+                or deal_data.get('is_archived') or deal_data.get('archived')):
+            return False, None
+        cf = deal_data.get('custom_fields') or {}
+        if not isinstance(cf, dict):
+            return False, None
+        refresh = cf.get(REFRESH_FIELD)
+        if isinstance(refresh, list):
+            refresh = refresh[0] if refresh else None
+        if refresh not in (None, ""):
+            threshold = int(float(str(refresh).strip()))
+            if threshold <= 0:
+                return False, None
+        else:
+            threshold = 30 if SELLER_ROLE_GP_ALLOC in _cf_option_ids(cf.get(SELLER_ROLE_FIELD)) else 60
+        raw = cf.get(LAST_CONFIRMED_FIELD)
+        if raw is None or str(raw).strip() == "":
+            return True, None
+        txt = str(raw).strip()[:10].replace('-', '/')
+        confirmed = datetime.strptime(txt, "%Y/%m/%d").date()
+        today = today or datetime.utcnow().date()
+        return (today - confirmed).days > threshold, confirmed
+    except Exception as e:
+        logger.info(f"unconfirmed_status: skipped ({e!r})")
+        return False, None
+
+
+def render_unconfirmed_notice(confirmed, deal_type, show_ask):
+    """Slim amber one-line notice under the deal header ('' never errors the page)."""
+    try:
+        if confirmed:
+            msg = (f"Unconfirmed — last confirmed {confirmed.strftime('%b')} {confirmed.day}, "
+                   f"{confirmed.year}. This order may no longer be available.")
+        else:
+            msg = "Unconfirmed — not recently confirmed. This order may no longer be available."
+        btn = ''
+        if show_ask:
+            who = "buyer" if deal_type == "Buy Order" else "seller"
+            btn = (
+                '<button type="button" class="unconfirmed-ask" onclick="'
+                "var b=document.querySelector('.qa-box');"
+                "var c=document.querySelector('.qa-box input[name=q_still_active]');"
+                "if(c){c.checked=true;}"
+                "if(b){b.scrollIntoView({behavior:'smooth',block:'start'});}"
+                f'">Ask the {who} to confirm</button>'
+            )
+        return (
+            '<div class="unconfirmed-notice">'
+            f'<span class="unconfirmed-clock" title="&#9201; {html_mod.escape(msg)}">&#9201;</span>'
+            f'<span class="unconfirmed-text">{html_mod.escape(msg)}</span>'
+            f'{btn}</div>'
+        )
+    except Exception as e:
+        logger.info(f"render_unconfirmed_notice: skipped ({e!r})")
+        return ''
+
+
+def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=True, owner_iqf_yes=False, est_val=None, unconfirmed=False):
     """Build the right-hand 'Questions about this deal' box (display only).
 
     Picks the buyer or seller question set based on the deal type, marks
@@ -1477,6 +1562,8 @@ def render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room=Tr
         qid = item["id"]
         question_text = item["q"]
 
+        if qid == "still_active" and not unconfirmed:
+            continue
         # If the answer is already visible in the left-hand tables, omit the question.
         if qid == "class" and mapped_fields.get('Class'):
             continue
@@ -2208,9 +2295,15 @@ def lambda_handler(event, context):
         _linked_ids = _deal_linked_person_ids(deal_data)
         if _linked_ids:
             stage_html += render_onboarding_status(deal_type, _linked_ids, _people_slim_status_index())
-    qa_box_html = "" if is_closed_public else render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room, owner_iqf_yes, est_val=_est_val)
+    _is_unconfirmed, _last_confirmed = unconfirmed_status(deal_data)
+    qa_box_html = "" if is_closed_public else render_qa_box(deal_type, mapped_fields, deal_id, deal_name, ask_data_room, owner_iqf_yes, est_val=_est_val, unconfirmed=_is_unconfirmed)
     _msg_raw = (deal_data.get('custom_fields') or {}).get('custom_label_4001285')
     hide_questions = (str(_msg_raw) == '7187011')
+    unconfirmed_html = ""
+    if _is_unconfirmed:
+        _show_ask = (MESSAGING_ALLOW in _cf_option_ids(_msg_raw)
+                     and 'name="q_still_active"' in qa_box_html)
+        unconfirmed_html = render_unconfirmed_notice(_last_confirmed, deal_type, _show_ask)
     similar_html = render_similar_companies(company_name, deal_type, deal_id)
     weekly_signup_html = "" if is_closed_public else render_weekly_signup(deal_id, deal_name)
     _side_inner = ('' if hide_questions else qa_box_html) + similar_html
@@ -2772,6 +2865,16 @@ def lambda_handler(event, context):
             .deal-subline {{ font-size: 15px; color: var(--text-secondary); margin: 2px 0 4px; }}
             .alt-live-list {{ margin: 0 0 12px; padding-left: 18px; }}
             .alt-live-list li {{ margin: 4px 0; }}
+            .unconfirmed-notice {{ display:flex; align-items:center; gap:8px; margin:8px 0 4px;
+                padding:6px 12px; background:#fff7e6; color:#b45309; border:1px solid #b45309;
+                border-radius:6px; font-size:13px; line-height:1.4; }}
+            .unconfirmed-clock {{ flex:none; cursor:help; }}
+            .unconfirmed-text {{ flex:1; }}
+            .unconfirmed-ask {{ flex:none; margin-left:auto; padding:3px 10px; font-size:12px;
+                font-weight:600; color:#b45309; background:#fff; border:1px solid #b45309;
+                border-radius:5px; cursor:pointer; }}
+            .unconfirmed-ask:hover {{ background:#fdebc8; }}
+            @media (max-width:600px) {{ .unconfirmed-notice {{ flex-wrap:wrap; }} }}
         </style>
     </head>
     <body>
@@ -2800,6 +2903,7 @@ def lambda_handler(event, context):
                 {bid_button_html}
             </div>
         </div>
+        {unconfirmed_html}
         {bid_modal_html}
         {alt_live_html}
         <div class="company-summary">{company_summary}</div>
