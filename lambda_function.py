@@ -1469,12 +1469,12 @@ def alt_live_link_text(d):
     side = 'Buy' if (d.get('type') or '').strip() == 'Buy Order' else 'Sell'
     parts = [side]
     lo, hi = _alt_num(d.get('min_deal_size')), _alt_num(d.get('max_deal_size'))
-    if lo is not None and hi is not None:
-        parts.append(f'{_seo_money(lo)}–{_seo_money(hi)}')
-    elif lo is not None:
-        parts.append(f'from {_seo_money(lo)}')
-    elif hi is not None:
-        parts.append(f'up to {_seo_money(hi)}')
+    lo_txt = _seo_money(lo) if lo is not None else None
+    hi_txt = _seo_money(hi) if hi is not None else None
+    if lo_txt and hi_txt and lo_txt != hi_txt:
+        parts.append(f'{lo_txt}–{hi_txt}')
+    elif lo_txt or hi_txt:
+        parts.append(lo_txt or hi_txt)
     kind = _alt_struct_kind(d.get('structure'))
     if kind == 'spv':
         parts.append('SPV')
