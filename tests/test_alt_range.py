@@ -29,10 +29,10 @@ class AltRange(unittest.TestCase):
         self.assertEqual(self.f(self.deal(1000000, 1004000)), "Sell · $1M · SPV")
 
     def test_min_only(self):
-        self.assertEqual(self.f(self.deal(500000, None)), "Sell · $500K · SPV")
+        self.assertEqual(self.f(self.deal(500000, None)), "Sell · from $500K · SPV")
 
     def test_max_only(self):
-        self.assertEqual(self.f(self.deal("", "$2,000,000")), "Sell · $2M · SPV")
+        self.assertEqual(self.f(self.deal("", "$2,000,000")), "Sell · up to $2M · SPV")
 
     def test_normal_range(self):
         self.assertEqual(self.f(self.deal(1000000, 5000000)), "Sell · $1M–$5M · SPV")

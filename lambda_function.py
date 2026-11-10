@@ -1473,8 +1473,12 @@ def alt_live_link_text(d):
     hi_txt = _seo_money(hi) if hi is not None else None
     if lo_txt and hi_txt and lo_txt != hi_txt:
         parts.append(f'{lo_txt}–{hi_txt}')
-    elif lo_txt or hi_txt:
-        parts.append(lo_txt or hi_txt)
+    elif lo_txt and hi_txt:
+        parts.append(lo_txt)
+    elif lo_txt:
+        parts.append(f'from {lo_txt}')
+    elif hi_txt:
+        parts.append(f'up to {hi_txt}')
     kind = _alt_struct_kind(d.get('structure'))
     if kind == 'spv':
         parts.append('SPV')
