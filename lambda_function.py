@@ -513,6 +513,329 @@ def _render_deal_switcher_modal(is_admin=False):
         </script>
     '''.replace('__INDEX_URL__', index_url)
 
+# --- Transferability (company multi-select) — display-only, read-only -------
+# Rules driven by the Pipeline COMPANY field labelled exactly "Transferability".
+# Nothing here writes to Pipeline or changes deal stages. Every failure path
+# fails OPEN (no restrictions) so a page never breaks because of this lookup.
+#
+# Field + option ids are resolved at runtime: one read-only GET of
+# /admin/company_custom_field_labels.json (JWT auth), cached in
+# s3://full-pipeline-cache/transferability-field.json for 24 hours. On lookup
+# failure the cached file is used even if stale; with no cached file at all,
+# no restrictions apply. Company values come from full-pipeline-cache/
+# companies.json and deal fields from full-pipeline-cache/deals.json (both
+# crm-snapshot, hourly).
+TR_FIELD_LABEL = "Transferability"
+TR_DIRECT_ALLOWED = "Direct Allowed"
+TR_ONLY_PREFERRED = "Only Preferred"
+TR_DIRECT_BLOCKED = "Direct Blocked"
+TR_APPROVED_TRANSACTORS = "Only Approved Transactors"
+TR_CURRENT_CAP_TABLE = "Only Current Cap Table"
+TR_OPTION_LABELS = (TR_DIRECT_ALLOWED, TR_ONLY_PREFERRED, TR_DIRECT_BLOCKED,
+                    TR_APPROVED_TRANSACTORS, TR_CURRENT_CAP_TABLE)
+
+TR_DEAL_TYPE_FIELD = "custom_label_1958"       # Deal Type
+TR_DEAL_TYPE_SELL = 5011675                    # Sell
+TR_STRUCTURE_FIELD = "custom_label_3064360"    # Structure
+TR_STRUCTURE_DIRECT = 6250090                  # Direct
+TR_SHARE_CLASS_FIELD = "custom_label_3064330"  # Share Class
+TR_SHARE_CLASS_COMMON = 5077831                # Common
+
+TR_BUCKET = "full-pipeline-cache"
+TR_FIELD_CACHE_KEY = "transferability-field.json"
+TR_COMPANIES_KEY = "companies.json"
+TR_DEALS_KEY = "deals.json"
+TR_FIELD_TTL = 24 * 3600        # field/option id resolution
+TR_FIELD_RETRY_SECS = 600       # after a failed resolution, retry at most this often
+TR_DATA_TTL = 600               # companies.json / deals.json per warm container
+
+TR_UNAVAILABLE_STATUS = "Not currently available — issuer transfer restrictions"
+TR_NOTE_PREFERRED = "Issuer currently allows transfers of preferred shares only."
+TR_NOTE_APPROVAL = "Transfers require company approval."
+TR_NOTE_CAP_TABLE = "Buyer must be an existing shareholder."
+
+_TR_FIELD_CACHE = {'ts': 0.0, 'val': None, 'source': None}
+_TR_COMPANIES_CACHE = {'ts': 0.0, 'val': None}
+_TR_UNAVAILABLE_CACHE = {'ts': 0.0, 'val': None}
+
+
+def _tr_ids(value):
+    """Normalise a (multi-)select custom field value to a list of ints.
+    Handles int, numeric str, comma-separated str and lists of either."""
+    if value is None or value == '':
+        return []
+    items = value if isinstance(value, (list, tuple, set)) else str(value).split(',')
+    out = []
+    for v in items:
+        try:
+            out.append(int(float(str(v).strip())))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _tr_parse_field_labels(data):
+    """Pipeline company_custom_field_labels payload -> resolution dict, or None
+    if no field is labelled exactly TR_FIELD_LABEL."""
+    if isinstance(data, dict):
+        entries = data.get('entries')
+        if entries is None:
+            entries = [data.get('entry') or data]
+    else:
+        entries = data or []
+    for e in entries:
+        if not isinstance(e, dict) or (e.get('name') or '').strip() != TR_FIELD_LABEL:
+            continue
+        options = {}
+        for o in e.get('custom_field_label_dropdown_entries') or []:
+            try:
+                options[(o.get('name') or '').strip()] = int(o['id'])
+            except (KeyError, TypeError, ValueError):
+                continue
+        fid = int(e['id'])
+        return {'field_id': fid, 'field_key': f"custom_label_{fid}", 'options': options}
+    return None
+
+
+def _tr_pipeline_get(path):
+    req = urllib.request.Request(
+        "https://api.pipelinecrm.com/api/v3" + path,
+        headers={"Accept": "application/json", **_tr_auth_headers()})
+    with urllib.request.urlopen(req, timeout=8) as resp:
+        return json.loads(resp.read().decode())
+
+
+def _tr_lookup_field_from_pipeline():
+    """ONE read-only GET of the company custom field labels (a second read-only
+    GET of the single label only if the list omits its dropdown options)."""
+    res = _tr_parse_field_labels(
+        _tr_pipeline_get("/admin/company_custom_field_labels.json?per_page=200"))
+    if res is None:
+        raise LookupError(f'no company custom field labelled "{TR_FIELD_LABEL}"')
+    if not res['options']:
+        one = _tr_parse_field_labels(
+            _tr_pipeline_get(f"/admin/company_custom_field_labels/{res['field_id']}.json"))
+        if one:
+            res = one
+    return res
+
+
+def _tr_read_field_cache(s3):
+    try:
+        obj = s3.get_object(Bucket=TR_BUCKET, Key=TR_FIELD_CACHE_KEY)
+        data = json.loads(obj['Body'].read().decode('utf-8'))
+        if data.get('field_key') and isinstance(data.get('options'), dict):
+            return data
+    except Exception as e:
+        logger.info(f"transferability: no usable S3 field cache ({e})")
+    return None
+
+
+def transferability_field(s3=None, now=None):
+    """{'field_id', 'field_key', 'options': {label: id}, 'resolved_at'} or None.
+    None means "apply no restrictions". Never raises."""
+    now = time.time() if now is None else now
+    c = _TR_FIELD_CACHE
+    ttl = TR_FIELD_TTL if c['val'] else TR_FIELD_RETRY_SECS
+    if c['ts'] and now - c['ts'] < ttl:
+        return c['val']
+    try:
+        s3 = s3 or boto3.client('s3')
+    except Exception as e:
+        logger.error(f"transferability: S3 client failed: {e}")
+        s3 = None
+    cached = _tr_read_field_cache(s3) if s3 else None
+    if cached and now - float(cached.get('resolved_at') or 0) < TR_FIELD_TTL:
+        c.update(ts=now, val=cached, source='s3-cache')
+        return cached
+    try:
+        res = _tr_lookup_field_from_pipeline()
+        res['resolved_at'] = now
+        missing = [l for l in TR_OPTION_LABELS if l not in res['options']]
+        if missing:
+            logger.warning(f"transferability: options not found on field: {missing}")
+        logger.info(f"transferability: resolved {res['field_key']} options={res['options']}")
+        if s3:
+            try:
+                s3.put_object(Bucket=TR_BUCKET, Key=TR_FIELD_CACHE_KEY,
+                              Body=json.dumps(res).encode('utf-8'),
+                              ContentType='application/json')
+            except Exception as e:
+                logger.warning(f"transferability: could not write S3 field cache: {e}")
+        c.update(ts=now, val=res, source='pipeline')
+        return res
+    except Exception as e:
+        if cached:
+            logger.error(f"transferability: Pipeline lookup failed, using stale S3 cache: {e}")
+            c.update(ts=now, val=cached, source='s3-cache-stale')
+            return cached
+        logger.error(f"transferability: lookup failed and no S3 cache; NO restrictions applied: {e}")
+        c.update(ts=now, val=None, source='none')
+        return None
+
+
+def transferability_labels(custom_fields, field):
+    """Set of option labels set on a company's custom_fields."""
+    if not field or not custom_fields:
+        return set()
+    by_id = {v: k for k, v in (field.get('options') or {}).items()}
+    return {by_id[i] for i in _tr_ids(custom_fields.get(field['field_key'])) if i in by_id}
+
+
+def tr_is_direct_sell(deal_cf):
+    deal_cf = deal_cf or {}
+    return (TR_DEAL_TYPE_SELL in _tr_ids(deal_cf.get(TR_DEAL_TYPE_FIELD))
+            and TR_STRUCTURE_DIRECT in _tr_ids(deal_cf.get(TR_STRUCTURE_FIELD)))
+
+
+def tr_deal_unavailable(deal_cf, labels):
+    """True if the deal must be shown as UNAVAILABLE. Buy orders never are."""
+    if not labels or not tr_is_direct_sell(deal_cf):
+        return False
+    if TR_DIRECT_BLOCKED in labels:
+        return True
+    if (TR_ONLY_PREFERRED in labels
+            and TR_SHARE_CLASS_COMMON in _tr_ids((deal_cf or {}).get(TR_SHARE_CLASS_FIELD))):
+        return True
+    return False
+
+
+def tr_deal_notes(is_buy, labels):
+    """Display notes for a deal whose company carries `labels`."""
+    labels = labels or set()
+    notes = []
+    if is_buy and TR_ONLY_PREFERRED in labels:
+        notes.append(TR_NOTE_PREFERRED)
+    if TR_APPROVED_TRANSACTORS in labels:
+        notes.append(TR_NOTE_APPROVAL)
+    if TR_CURRENT_CAP_TABLE in labels:
+        notes.append(TR_NOTE_CAP_TABLE)
+    return notes
+
+
+def _tr_s3_json(s3, key):
+    obj = s3.get_object(Bucket=TR_BUCKET, Key=key)
+    return json.loads(obj['Body'].read().decode('utf-8'))
+
+
+def _tr_deal_company_id(d):
+    cid = d.get('company_id')
+    if cid in (None, '') and isinstance(d.get('company'), dict):
+        cid = d['company'].get('id')
+    try:
+        return int(cid)
+    except (TypeError, ValueError):
+        return None
+
+
+def transferability_companies(field, s3=None, now=None):
+    """{company_id(int): {'name', 'labels': set}} for companies with any
+    Transferability value, from companies.json. {} on any failure."""
+    if not field:
+        return {}
+    now = time.time() if now is None else now
+    c = _TR_COMPANIES_CACHE
+    if c['val'] is not None and now - c['ts'] < TR_DATA_TTL:
+        return c['val']
+    out = {}
+    try:
+        raw = _tr_s3_json(s3 or boto3.client('s3'), TR_COMPANIES_KEY)
+        recs = raw.get('companies') if isinstance(raw, dict) else raw
+        for rec in recs or []:
+            try:
+                labels = transferability_labels(rec.get('custom_fields') or {}, field)
+                if labels:
+                    out[int(rec['id'])] = {'name': rec.get('name'), 'labels': labels}
+            except (KeyError, TypeError, ValueError, AttributeError):
+                continue
+    except Exception as e:
+        logger.error(f"transferability: companies.json load failed; no restrictions: {e}")
+        return c['val'] or {}
+    c.update(ts=now, val=out)
+    return out
+
+
+def tr_unavailable_ids_from_deals(deals, companies):
+    """Set of deal ids (str) that are UNAVAILABLE, given raw Pipeline deals."""
+    out = set()
+    if not companies:
+        return out
+    for d in deals or []:
+        try:
+            co = companies.get(_tr_deal_company_id(d))
+            if co and tr_deal_unavailable(d.get('custom_fields') or {}, co['labels']):
+                out.add(str(d['id']))
+        except (KeyError, TypeError, AttributeError):
+            continue
+    return out
+
+
+def transferability_unavailable_ids(s3=None, now=None):
+    """Set of deal ids (str) to hide from lists. Empty set on any failure."""
+    now = time.time() if now is None else now
+    c = _TR_UNAVAILABLE_CACHE
+    if c['val'] is not None and now - c['ts'] < TR_DATA_TTL:
+        return c['val']
+    try:
+        s3 = s3 or boto3.client('s3')
+        field = transferability_field(s3=s3, now=now)
+        companies = transferability_companies(field, s3=s3, now=now)
+        if not companies:
+            out = set()
+        else:
+            raw = _tr_s3_json(s3, TR_DEALS_KEY)
+            out = tr_unavailable_ids_from_deals(
+                raw.get('deals') if isinstance(raw, dict) else raw, companies)
+    except Exception as e:
+        logger.error(f"transferability: unavailable-deal scan failed; no restrictions: {e}")
+        return c['val'] or set()
+    c.update(ts=now, val=out)
+    return out
+
+
+def tr_filter_deals(deals):
+    """Drop UNAVAILABLE deals from a pipeline_deals.json-style list. Never raises."""
+    try:
+        hidden = transferability_unavailable_ids()
+    except Exception as e:
+        logger.error(f"transferability: filter failed; no restrictions: {e}")
+        return deals
+    if not hidden:
+        return deals
+    return [d for d in deals if str(d.get('id')) not in hidden]
+
+
+def _tr_auth_headers():
+    """Pipeline auth for the Transferability label lookup (module JWT)."""
+    return {"Authorization": f"Bearer {JWT_TOKEN}"}
+
+
+def tr_page_state(deal_cf, company_cf, is_buy):
+    """(unavailable, notes) for the deal page. Fails open: (False, [])."""
+    try:
+        field = transferability_field()
+        if not field:
+            return False, []
+        labels = transferability_labels(company_cf or {}, field)
+        return tr_deal_unavailable(deal_cf or {}, labels), tr_deal_notes(is_buy, labels)
+    except Exception as e:
+        logger.error(f"transferability: deal page check failed; no restrictions: {e}")
+        return False, []
+
+
+def render_tr_unavailable_status():
+    return ('<span class="deal-status">&bull; Status: '
+            f'<span class="status-obsolete">{TR_UNAVAILABLE_STATUS}</span></span>')
+
+
+def render_tr_notes(notes):
+    if not notes:
+        return ''
+    return ('<div class="transfer-note" style="margin:8px 0 0;'
+            'color:var(--text-secondary,#555);font-size:0.95em;">'
+            + _sim_esc(' '.join(notes)) + '</div>')
+
+
 # --- Explore Similar Companies -------------------------------------------
 SIMILAR_TRADES_BASE = "https://trades.graciagroup.com/"
 SIMILAR_MAX_PILLS = 12
@@ -533,7 +856,7 @@ def _sim_load_deals():
     try:
         s3c = boto3.client('s3')
         obj = s3c.get_object(Bucket='pipeline-public-deal-data', Key='pipeline_deals.json')
-        return json.loads(obj['Body'].read().decode('utf-8'))
+        return tr_filter_deals(json.loads(obj['Body'].read().decode('utf-8')))
     except Exception as e:
         logger.warning("similar-companies: could not load pipeline_deals.json: %s", e)
         return []
@@ -2288,6 +2611,19 @@ def lambda_handler(event, context):
         )
 
     deal_type = map_option_value('Type', mapped_fields.get('Type', []))
+    # Transferability (display-only): unavailable direct sells keep the page,
+    # description, table and email capture but lose the Bid button and show
+    # an unavailable status; notes go on one line under the header.
+    transfer_note_html = ""
+    if not is_closed_public:
+        _tr_unavail, _tr_notes = tr_page_state(
+            deal_data.get('custom_fields') or {}, company_custom_fields,
+            deal_type == "Buy Order")
+        if _tr_unavail:
+            stage_html = render_tr_unavailable_status()
+            bid_button_html = ""
+            bid_modal_html = ""
+        transfer_note_html = render_tr_notes(_tr_notes)
     owner_iqf_yes = False
     if deal_type == "Buy Order" and not is_closed_public:
         owner_iqf_yes = fetch_person_iqf_yes((deal_data.get('primary_contact') or {}).get('id'))
@@ -2903,6 +3239,7 @@ def lambda_handler(event, context):
                 {bid_button_html}
             </div>
         </div>
+        {transfer_note_html}
         {unconfirmed_html}
         {bid_modal_html}
         {alt_live_html}
