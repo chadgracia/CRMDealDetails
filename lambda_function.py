@@ -10,7 +10,7 @@ import base64
 import hmac
 import hashlib
 import re
-from datetime import datetime, timedelta  # NEW: Import for date handling
+from datetime import datetime, timedelta, timezone  # NEW: Import for date handling
 
 API_KEY = "defe67185ffd4993874558be8c4eb29b"  # Your actual NewsAPI key
 
@@ -1778,9 +1778,54 @@ def _deal_stage_id(deal_data):
     return ''
 
 
+RESTORE_LOG_BUCKET     = "full-pipeline-cache"
+RESTORE_LOG_KEY        = "obsolete-review/log.json"   # written by stale-deal-scanner
+RESTORE_LOG_TTL        = 600                          # seconds
+RESTORE_GRACE_MINUTES  = 15
+_restore_log_cache = {"by_deal": None, "loaded_at": 0.0}
+
+
+def _parse_iso_utc(value):
+    """ISO timestamp -> aware UTC datetime, or None."""
+    try:
+        dt = datetime.fromisoformat(str(value).strip().replace('Z', '+00:00'))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _restore_log_latest():
+    """{str(deal_id): latest log entry} from the obsolete-review log, cached 10 min.
+    Never raises: missing/unreadable/malformed log -> {} (no restores)."""
+    cache = _restore_log_cache
+    now = time.time()
+    if cache["by_deal"] is not None and now - cache["loaded_at"] < RESTORE_LOG_TTL:
+        return cache["by_deal"]
+    by_deal, best = {}, {}
+    try:
+        obj = boto3.client('s3').get_object(Bucket=RESTORE_LOG_BUCKET, Key=RESTORE_LOG_KEY)
+        entries = json.loads(obj["Body"].read()).get("entries") or []
+        floor = datetime.min.replace(tzinfo=timezone.utc)
+        for i, e in enumerate(entries):
+            if not isinstance(e, dict) or e.get("deal_id") is None:
+                continue
+            did = str(e.get("deal_id")).strip()
+            key = (_parse_iso_utc(e.get("at")) or floor, i)
+            if did not in best or key >= best[did]:
+                best[did], by_deal[did] = key, e
+    except Exception as e:
+        logger.info(f"restore log: unavailable ({e!r})")
+        by_deal = {}
+    cache["by_deal"], cache["loaded_at"] = by_deal, now
+    return by_deal
+
+
 def unconfirmed_status(deal_data, today=None):
-    """(is_unconfirmed, last_confirmed_date_or_None). Fail-soft: any missing or
-    unparseable input that the rule needs returns (False, None)."""
+    """(is_unconfirmed, effective_date_or_None). Effective date = newer of Last
+    Confirmed and the UTC date of updated_at (restore exception applies).
+    Fail-soft: any unparseable input the rule needs returns (False, None)."""
     try:
         stage = get_deal_stage_name(deal_data).strip().lower()
         if (_deal_stage_id(deal_data) == HOLD_STAGE_ID or stage == "hold"
@@ -1800,12 +1845,30 @@ def unconfirmed_status(deal_data, today=None):
         else:
             threshold = 30 if SELLER_ROLE_GP_ALLOC in _cf_option_ids(cf.get(SELLER_ROLE_FIELD)) else 60
         raw = cf.get(LAST_CONFIRMED_FIELD)
-        if raw is None or str(raw).strip() == "":
+        confirmed = None
+        if raw is not None and str(raw).strip() != "":
+            txt = str(raw).strip()[:10].replace('-', '/')
+            confirmed = datetime.strptime(txt, "%Y/%m/%d").date()
+        # Any Pipeline edit counts as confirmation, except the restore's own write:
+        # if the deal's latest obsolete-review log entry is "restored", updated_at
+        # counts only when it is more than 15 minutes after that restore.
+        updated = None
+        upd_raw = deal_data.get('updated_at')
+        if upd_raw not in (None, ""):
+            upd_dt = datetime.strptime(str(upd_raw).strip(), '%Y/%m/%d %H:%M:%S %z').astimezone(timezone.utc)
+            entry = _restore_log_latest().get(str(deal_data.get('id')))
+            if entry is None or entry.get('action') != 'restored':
+                updated = upd_dt.date()
+            else:
+                at = _parse_iso_utc(entry.get('at'))
+                if at is not None and upd_dt > at + timedelta(minutes=RESTORE_GRACE_MINUTES):
+                    updated = upd_dt.date()
+        dates = [d for d in (confirmed, updated) if d is not None]
+        if not dates:
             return True, None
-        txt = str(raw).strip()[:10].replace('-', '/')
-        confirmed = datetime.strptime(txt, "%Y/%m/%d").date()
+        effective = max(dates)
         today = today or datetime.utcnow().date()
-        return (today - confirmed).days > threshold, confirmed
+        return (today - effective).days > threshold, effective
     except Exception as e:
         logger.info(f"unconfirmed_status: skipped ({e!r})")
         return False, None
