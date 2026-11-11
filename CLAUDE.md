@@ -51,6 +51,23 @@ by a GitHub Action on push to `main`.
   (bid fields, fee fields, …) needs a matching `q_line` case there to appear in the relayed
   email — otherwise it posts but is "dead."
 
+## Unconfirmed rule (unconfirmed_status)
+- Returns `(is_unconfirmed, effective_date_or_None)`; `render_unconfirmed_notice` shows
+  "last confirmed <effective date>" or "not recently confirmed" when there is none.
+- Never Unconfirmed: Hold stage (2094373) and closed/archived stages; Refresh field
+  `custom_label_3994687` = 0. Threshold = Refresh days, else 30 for Seller Role 7020357, else 60.
+- Effective date = the newer of Last Confirmed (`custom_label_4012491`, "YYYY/MM/DD" or
+  "YYYY-MM-DD") and the UTC date of the deal's `updated_at` — any Pipeline edit counts as
+  confirmation. Unconfirmed = no effective date, or older than the threshold.
+- Restore exception: stale-deal-scanner logs restores to
+  `s3://full-pipeline-cache/obsolete-review/log.json` (`{"entries": [{deal_id, action, at}]}`).
+  If the deal's LATEST entry is `"restored"`, `updated_at` counts only when it is > 15 min after
+  that entry's `at`; otherwise Last Confirmed alone. So the restore's own write doesn't make an
+  old deal look confirmed, but later edits do.
+- The log is parsed to `{deal_id: latest entry}` and cached module-level for 10 min
+  (`_restore_log_cache`). Missing/unreadable/malformed log = no restores. Fail-soft: any other
+  error returns `(False, None)`.
+
 ## Related repo
 - `chadgracia/deal-update-form` — the Lambda behind the Questions form URL (submit handling +
   emails). It is usually NOT in this session's scope; changes there must be made in a session
