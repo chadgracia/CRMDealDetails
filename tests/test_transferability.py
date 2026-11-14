@@ -11,7 +11,7 @@ import urllib.parse
 import urllib.request
 
 SRC = os.path.join(os.path.dirname(__file__), "..", "lambda_function.py")
-WANT_PREFIXES = ("TR_", "_TR_", "SIMILAR_")
+WANT_PREFIXES = ("TR_", "_TR_", "SIMILAR_", "VIS", "_VIS_")
 WANT_FUNCS = {
     "_tr_ids", "_tr_parse_field_labels", "_tr_pipeline_get", "_tr_lookup_field_from_pipeline",
     "_tr_read_field_cache", "transferability_field", "transferability_labels", "tr_is_direct_sell",
@@ -20,6 +20,8 @@ WANT_FUNCS = {
     "tr_filter_deals", "tr_page_state", "render_tr_unavailable_status", "render_tr_notes",
     "_sim_esc", "_sim_tags", "_sim_load_deals", "compute_similar_companies", "_sim_num", "_sim_span",
     "_sim_rank_map", "_sim_price", "_sim_pick_deal", "render_similar_companies",
+    "_tr_deals_json", "vis_value", "deal_visibility", "_is_no_such_key", "visibility_overrides",
+    "visibility_map", "visibility_hidden_ids", "vis_filter_deals",
 }
 
 

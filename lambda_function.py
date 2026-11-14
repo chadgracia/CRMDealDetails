@@ -557,6 +557,22 @@ TR_NOTE_CAP_TABLE = "Buyer must be an existing shareholder."
 _TR_FIELD_CACHE = {'ts': 0.0, 'val': None, 'source': None}
 _TR_COMPANIES_CACHE = {'ts': 0.0, 'val': None}
 _TR_UNAVAILABLE_CACHE = {'ts': 0.0, 'val': None}
+_TR_DEALS_CACHE = {'ts': 0.0, 'val': None}
+
+# --- Deal Visibility ------------------------------------------------------
+# Pipeline dropdown on the deal. Blank/unknown = All Investors (no change).
+# Private: never shown to counterparties (non-admin deal page shows only a
+# "not currently available" stub). Interested investors only: page still opens
+# by direct link but is noindex. Both are dropped from every other-deal list
+# (tr_filter_deals). List filtering reads deals.json plus the short-lived
+# visibility-overrides.json written by deal-update-form (override wins).
+VISIBILITY_FIELD = "custom_label_4013323"
+VIS_ALL = 7223456          # "All Investors"
+VIS_INTERESTED = 7223457   # "Interested investors only"
+VIS_PRIVATE = 7223458      # "Private"
+VIS_OVERRIDES_KEY = "visibility-overrides.json"   # in TR_BUCKET
+VIS_OVERRIDES_TTL = 60
+_VIS_OVERRIDES_CACHE = {'ts': 0.0, 'val': None}
 
 
 def _tr_ids(value):
@@ -770,6 +786,21 @@ def tr_unavailable_ids_from_deals(deals, companies):
     return out
 
 
+def _tr_deals_json(s3=None, now=None):
+    """Raw Pipeline deals list from full-pipeline-cache/deals.json, cached
+    TR_DATA_TTL per warm container (shared by Transferability and Visibility).
+    Raises on failure; callers fail soft."""
+    now = time.time() if now is None else now
+    c = _TR_DEALS_CACHE
+    if c['val'] is not None and now - c['ts'] < TR_DATA_TTL:
+        return c['val']
+    raw = _tr_s3_json(s3 or boto3.client('s3'), TR_DEALS_KEY)
+    deals = raw.get('deals') if isinstance(raw, dict) else raw
+    deals = deals if isinstance(deals, list) else []
+    c.update(ts=now, val=deals)
+    return deals
+
+
 def transferability_unavailable_ids(s3=None, now=None):
     """Set of deal ids (str) to hide from lists. Empty set on any failure."""
     now = time.time() if now is None else now
@@ -783,9 +814,7 @@ def transferability_unavailable_ids(s3=None, now=None):
         if not companies:
             out = set()
         else:
-            raw = _tr_s3_json(s3, TR_DEALS_KEY)
-            out = tr_unavailable_ids_from_deals(
-                raw.get('deals') if isinstance(raw, dict) else raw, companies)
+            out = tr_unavailable_ids_from_deals(_tr_deals_json(s3, now), companies)
     except Exception as e:
         logger.error(f"transferability: unavailable-deal scan failed; no restrictions: {e}")
         return c['val'] or set()
@@ -793,8 +822,96 @@ def transferability_unavailable_ids(s3=None, now=None):
     return out
 
 
+def vis_value(v):
+    """Normalise a Visibility value (int, numeric str, "7223458.0", 1-element
+    list) to an option id; blank/unparseable/unknown -> VIS_ALL."""
+    if isinstance(v, (list, tuple)):
+        v = v[0] if v else None
+    if v is None or isinstance(v, bool):
+        return VIS_ALL
+    try:
+        n = int(float(str(v).strip()))
+    except (TypeError, ValueError, OverflowError):
+        return VIS_ALL
+    return n if n in (VIS_INTERESTED, VIS_PRIVATE) else VIS_ALL
+
+
+def deal_visibility(custom_fields):
+    """Visibility option id from a deal's custom_fields (VIS_ALL when unset)."""
+    if not isinstance(custom_fields, dict):
+        return VIS_ALL
+    return vis_value(custom_fields.get(VISIBILITY_FIELD))
+
+
+def _is_no_such_key(e):
+    code = ((getattr(e, 'response', None) or {}).get('Error') or {}).get('Code')
+    return code in ('NoSuchKey', '404') or type(e).__name__ == 'NoSuchKey'
+
+
+def visibility_overrides(s3=None, now=None):
+    """{str(deal_id): option_id} from visibility-overrides.json, cached
+    VIS_OVERRIDES_TTL. Missing file = {}. Raises on other failures."""
+    now = time.time() if now is None else now
+    c = _VIS_OVERRIDES_CACHE
+    if c['val'] is not None and now - c['ts'] < VIS_OVERRIDES_TTL:
+        return c['val']
+    try:
+        raw = _tr_s3_json(s3 or boto3.client('s3'), VIS_OVERRIDES_KEY)
+    except Exception as e:
+        if not _is_no_such_key(e):
+            raise
+        raw = {}
+    out = {}
+    if isinstance(raw, dict):
+        for k, rec in raw.items():
+            if isinstance(rec, dict) and 'v' in rec:
+                out[str(k).strip()] = vis_value(rec.get('v'))
+    c.update(ts=now, val=out)
+    return out
+
+
+def visibility_map(deals, overrides):
+    """{str(deal_id): option_id} from raw Pipeline deals, overrides on top."""
+    out = {}
+    for d in deals or []:
+        if isinstance(d, dict) and d.get('id') is not None:
+            out[str(d['id'])] = deal_visibility(d.get('custom_fields'))
+    for k, v in (overrides or {}).items():
+        out[str(k)] = vis_value(v)
+    return out
+
+
+def visibility_hidden_ids(s3=None, now=None):
+    """Deal ids (str) that are Private or Interested-only: kept out of every
+    other-deal list. Raises when deals.json cannot be read."""
+    s3 = s3 or boto3.client('s3')
+    deals = _tr_deals_json(s3, now)
+    try:
+        overrides = visibility_overrides(s3, now)
+    except Exception as e:
+        logger.error(f"visibility: overrides unreadable; using deals.json only: {type(e).__name__}")
+        overrides = {}
+    vmap = visibility_map(deals, overrides)
+    return {k for k, v in vmap.items() if v in (VIS_PRIVATE, VIS_INTERESTED)}
+
+
+def vis_filter_deals(deals):
+    """Drop Private / Interested-only deals from a list. Never raises; on a
+    lookup failure logs one line and returns the list unfiltered."""
+    try:
+        hidden = visibility_hidden_ids()
+    except Exception as e:
+        logger.error(f"visibility: lookup failed; no visibility filtering: {type(e).__name__}")
+        return deals
+    if not hidden or not isinstance(deals, list):
+        return deals
+    return [d for d in deals if not (isinstance(d, dict) and str(d.get('id')) in hidden)]
+
+
 def tr_filter_deals(deals):
-    """Drop UNAVAILABLE deals from a pipeline_deals.json-style list. Never raises."""
+    """Drop UNAVAILABLE deals (Transferability) and Private / Interested-only
+    deals (Visibility) from a pipeline_deals.json-style list. Never raises."""
+    deals = vis_filter_deals(deals)
     try:
         hidden = transferability_unavailable_ids()
     except Exception as e:
@@ -2367,6 +2484,354 @@ def _pd_apply(event, qp, deal_id, response):
         return response
 
 
+# Top nav, deal switcher and header/logo CSS. Shared by the full deal page and
+# the Private-deal page (render_private_deal_page); injected into their f-strings.
+PAGE_NAV_CSS = """.topnav {
+                display: flex;
+                align-items: center;
+                flex-wrap: nowrap;
+                gap: 12px;
+                padding: 10px 0;
+                margin-bottom: 10px;
+                border-bottom: 1px solid #ddd;
+            }
+            .nav-brand {
+                display: inline-block;
+                background-color: #eef2f6;
+                border: 1px solid #d7dee6;
+                border-radius: 999px;
+                padding: 7px 11px;
+                font-size: 13.5px;
+                font-weight: 700;
+                color: var(--accent, #3d5a73);
+                text-decoration: none;
+                white-space: nowrap;
+                flex-shrink: 0;
+            }
+            .nav-tabs {
+                display: flex;
+                align-items: center;
+                flex-wrap: nowrap;
+                gap: 6px;
+                flex: 1;
+                min-width: 0;
+            }
+            .nav-tab {
+                display: inline-block;
+                background-color: #fff;
+                border: 1px solid #ddd;
+                border-radius: 999px;
+                padding: 7px 11px;
+                font-size: 13.5px;
+                font-weight: 600;
+                color: var(--ink);
+                text-decoration: none;
+                white-space: nowrap;
+            }
+            /* Allow wrapping below 1080px. The one-row nav (admin search icon + 2-digit auction count) needs ~954px, so it wraps only when it must. */
+            @media (max-width: 1080px) {
+                .topnav {
+                    flex-wrap: wrap;
+                }
+                .nav-tabs {
+                    flex-wrap: wrap;
+                    min-width: auto;
+                }
+            }
+            .nav-tab:hover {
+                background-color: #f0f0f0;
+            }
+            .nav-tab-active,
+            .nav-tab-active:hover {
+                background-color: #1a1a1a;
+                border-color: #1a1a1a;
+                color: #fff;
+            }
+            .nav-tab-disabled {
+                color: #999;
+                cursor: default;
+            }
+            .nav-tab-disabled:hover {
+                background-color: #fff;
+            }
+            .btn.nav-signin {
+                background-color: #fff;
+                color: var(--ink);
+                border: 1px solid #ddd;
+                border-radius: 999px;
+                padding: 8px 16px;
+                font-size: 14px;
+                font-weight: 600;
+                white-space: nowrap;
+                margin-bottom: 0;
+                margin-left: auto;
+            }
+            .btn.nav-signin:hover {
+                background-color: #f0f0f0;
+            }
+            .nav-icon-btn {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 34px;
+                height: 34px;
+                background-color: #fff;
+                border: 1px solid #ddd;
+                border-radius: 999px;
+                color: var(--ink);
+                cursor: pointer;
+                padding: 0;
+            }
+            .nav-icon-btn:hover {
+                background-color: #f0f0f0;
+            }
+            .deal-switcher-overlay {
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background-color: rgba(0,0,0,0.5);
+                z-index: 2000;
+                padding-top: 12vh;
+            }
+            .deal-switcher-overlay.show {
+                display: block;
+            }
+            .deal-switcher-box {
+                background-color: #fff;
+                margin: 0 auto;
+                width: 90%;
+                max-width: 560px;
+                border-radius: 8px;
+                box-shadow: 0 8px 30px rgba(0,0,0,0.25);
+                overflow: hidden;
+                font-family: Arial, sans-serif;
+            }
+            .deal-switcher-input {
+                width: 100%;
+                box-sizing: border-box;
+                border: none;
+                border-bottom: 1px solid #ddd;
+                padding: 16px 18px;
+                font-size: 16px;
+                font-family: inherit;
+                outline: none;
+            }
+            .deal-switcher-results {
+                max-height: 50vh;
+                overflow-y: auto;
+            }
+            .deal-switcher-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+                padding: 10px 18px;
+                cursor: pointer;
+                font-size: 14px;
+                color: #333;
+            }
+            .deal-switcher-row.active {
+                background-color: #f0f4f8;
+            }
+            .deal-switcher-label {
+                flex: 1;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .deal-switcher-copy {
+                flex-shrink: 0;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 26px;
+                height: 26px;
+                background: none;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                color: #666;
+                padding: 0;
+            }
+            .deal-switcher-copy:hover {
+                background-color: #e2e6ea;
+                color: #333;
+            }
+            .deal-switcher-copy svg {
+                width: 14px;
+                height: 14px;
+                fill: none;
+                stroke: currentColor;
+                stroke-width: 1.3;
+            }
+            .deal-switcher-empty {
+                padding: 16px 18px;
+                color: #888;
+                font-size: 14px;
+            }
+            .navacct {
+                position: relative;
+                margin-left: auto;
+            }
+            .navacct-trigger {
+                display: inline-block;
+                background-color: #fff;
+                border: 1px solid #ddd;
+                border-radius: 999px;
+                padding: 8px 16px;
+                font-size: 14px;
+                font-weight: 600;
+                color: var(--ink);
+                cursor: pointer;
+                white-space: nowrap;
+            }
+            .navacct-trigger:hover {
+                background-color: #f0f0f0;
+            }
+            .navacct-menu {
+                display: none;
+                position: absolute;
+                right: 0;
+                top: 100%;
+                margin-top: 6px;
+                background: #fff;
+                border-radius: 6px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                min-width: 220px;
+                padding: 6px 0;
+                z-index: 50;
+            }
+            .navacct:hover .navacct-menu, .navacct:focus-within .navacct-menu {
+                display: block;
+            }
+            .navacct-item {
+                display: block;
+                padding: 9px 16px;
+                font-size: 13px;
+                color: var(--ink);
+                text-decoration: none;
+                white-space: nowrap;
+            }
+            .navacct-item:hover {
+                background: #f4f4f4;
+            }
+            .navacct-static {
+                color: var(--text-secondary, #666);
+                font-weight: 600;
+                cursor: default;
+            }
+            .navacct-static:hover {
+                background: none;
+            }
+            .navacct-disabled {
+                color: #999;
+                cursor: default;
+            }
+            .navacct-disabled:hover {
+                background: none;
+            }
+            .header {
+                flex-wrap: wrap;
+            }
+            .header-content {
+                flex: 1;
+                min-width: 300px;
+            }
+            .logo-container {
+                margin: 0 20px;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+            }
+            .company-logo {
+                max-width: 120px;
+                max-height: 80px;
+                object-fit: contain;
+            }"""
+
+
+GA_HEAD_HTML = (
+    '<script async src="https://www.googletagmanager.com/gtag/js?id=G-L9JN3TRR2S"></script>'
+    '<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}'
+    "gtag('js',new Date());gtag('config','G-L9JN3TRR2S');</script>")
+
+ROBOTS_NOINDEX_HTML = '<meta name="robots" content="noindex">'
+VIS_UNAVAILABLE_TEXT = "This deal is not currently available."
+
+
+def render_visibility_banner(visibility):
+    """Admin-only label for a Private / Interested-only deal; '' otherwise."""
+    if visibility == VIS_PRIVATE:
+        text, color, bg = "Private: not shown to counterparties", "#b91c1c", "#fdf2f2"
+    elif visibility == VIS_INTERESTED:
+        text, color, bg = "Interested investors only", "#b45309", "#fdf6e7"
+    else:
+        return ''
+    return (f'<div class="vis-banner" style="margin:12px 0;padding:8px 12px;'
+            f'border:1px solid {color};border-left:4px solid {color};border-radius:6px;'
+            f'background:{bg};color:{color};font-weight:600;font-size:14px">{text}</div>')
+
+
+def render_private_deal_page(company_name, top_nav_html, deal_switcher_html, similar_html=''):
+    """Stub page for a Private deal seen by a non-admin: company header, one
+    unavailable line and the search/similar links. Carries no deal terms,
+    price, size, structure, fees, notes, Q&A, bid or LOI controls."""
+    co = html_mod.escape(str(company_name or ''), quote=True)
+    logo = "https://bannerlogos.s3.us-east-1.amazonaws.com/" + re.sub(r'[^a-zA-Z0-9]', '', str(company_name or '')) + ".png"
+    title = f"{co} | Gracia Group" if co else "Gracia Group"
+    return f"""<!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        {GA_HEAD_HTML}
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        {ROBOTS_NOINDEX_HTML}
+        <title>{title}</title>
+        <link rel="stylesheet" href="https://s3.us-east-1.amazonaws.com/main.css/master.css">
+        <style>
+            {PAGE_NAV_CSS}
+            .bid-btn {{ background-color: #3d7355; color: #fff; }}
+            .bid-btn:hover {{ background-color: #345f48; }}
+            .similar-box {{ max-width:420px; box-sizing:border-box; border:1px solid var(--border-strong);
+                            border-radius:8px; padding:14px 16px; background:#faf8f3; font-size:13px; }}
+            .similar-box h2 {{ margin:0 0 10px 0; font-size:15px; }}
+            .similar-pills {{ display:flex; flex-wrap:wrap; gap:6px; }}
+            .similar-pill {{ display:inline-block; background:#CCDBEA; border:none;
+                             color:var(--ink); font-weight:500; font-size:14px; padding:6px 14px;
+                             border-radius:999px; text-decoration:none; }}
+            .similar-pill:hover {{ background:#B7CBE1; }}
+            .similar-note {{ margin:10px 0 0; font-size:11px; color:var(--text-secondary); }}
+            .similar-count {{ font-size:10px; font-weight:600; margin-left:4px; color:inherit; opacity:0.65; }}
+        </style>
+    </head>
+    <body>
+        {top_nav_html}
+        <div class="header">
+            <div class="header-content">
+                <h1><strong>{co}</strong></h1>
+            </div>
+            <div class="logo-container">
+                <img src="{logo}" alt="{co} logo" class="company-logo"
+                     onerror="this.src='https://bannerlogos.s3.us-east-1.amazonaws.com/default.png';">
+            </div>
+        </div>
+        <div class="closed-banner" style="{ALT_BOX_STYLE}">
+            <h2 style="margin:0 0 16px;font-size:20px">{VIS_UNAVAILABLE_TEXT}</h2>
+            <div style="display:flex;flex-wrap:wrap;gap:12px">
+                <a href="#" class="btn bid-btn" onclick="var b=document.getElementById('dealSwitcherBtn');if(b){{b.click();}}return false;">Search similar opportunities</a>
+                <a href="https://trades.graciagroup.com/" class="btn">View live indications</a>
+            </div>
+        </div>
+        {similar_html}
+        {deal_switcher_html}
+    </body>
+    </html>
+    """
+
+
 def lambda_handler(event, context):
     logger.info("Lambda function started")
     logger.info(f"Incoming event: {json.dumps(event)}")
@@ -2409,6 +2874,24 @@ def lambda_handler(event, context):
     company_data = deal_data.get('company_data', {})
     # Extract company name
     company_name = company_data.get('name', 'Unknown Company')
+
+    # Visibility: the live Pipeline value on the deal just fetched (fresher
+    # than deals.json / visibility-overrides.json, so no override lookup here).
+    visibility = deal_visibility(custom_fields)
+    if visibility == VIS_PRIVATE and not _is_admin:
+        _priv_type = map_option_value('Type', mapped_fields.get('Type', []))
+        try:
+            _priv_similar = render_similar_companies(company_name, _priv_type, deal_id)
+        except Exception as e:
+            logger.warning(f"visibility: similar companies failed on private page: {type(e).__name__}")
+            _priv_similar = ''
+        return {
+            'statusCode': 200,
+            'headers': {'Content-Type': 'text/html', 'X-Robots-Tag': 'noindex'},
+            'body': render_private_deal_page(company_name, top_nav_html, deal_switcher_html, _priv_similar),
+        }
+    robots_meta_html = ROBOTS_NOINDEX_HTML if visibility in (VIS_PRIVATE, VIS_INTERESTED) else ''
+    visibility_banner_html = render_visibility_banner(visibility) if _is_admin else ''
 
     # Fetch news data for the company - using exact phrase matching with business context
     business_context = "funding OR pre-IPO OR finance OR investment OR technology OR startup OR venture OR company OR business"
@@ -2802,10 +3285,7 @@ def lambda_handler(event, context):
     else:
         h1_html = f'<h1><strong>{deal_name}{_struct_desc}</strong></h1>'
 
-    ga_head_html = '' if _is_admin else (
-        '<script async src="https://www.googletagmanager.com/gtag/js?id=G-L9JN3TRR2S"></script>'
-        '<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}'
-        "gtag('js',new Date());gtag('config','G-L9JN3TRR2S');</script>")
+    ga_head_html = '' if _is_admin else GA_HEAD_HTML
 
     html_content = f"""
     <!DOCTYPE html>
@@ -2814,7 +3294,7 @@ def lambda_handler(event, context):
         <meta charset="UTF-8">
         {ga_head_html}
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>{seo_title_html}</title>
+        {robots_meta_html}<title>{seo_title_html}</title>
         {seo_desc_meta}
         {canonical_html}
         <link rel="stylesheet" href="https://s3.us-east-1.amazonaws.com/main.css/master.css">
@@ -2822,271 +3302,7 @@ def lambda_handler(event, context):
             /* Page-specific layout only. The shared Gracia look (font stack,
                page container, header, buttons, tables, news list, disclaimer)
                comes from master.css. */
-            .topnav {{
-                display: flex;
-                align-items: center;
-                flex-wrap: nowrap;
-                gap: 12px;
-                padding: 10px 0;
-                margin-bottom: 10px;
-                border-bottom: 1px solid #ddd;
-            }}
-            .nav-brand {{
-                display: inline-block;
-                background-color: #eef2f6;
-                border: 1px solid #d7dee6;
-                border-radius: 999px;
-                padding: 7px 11px;
-                font-size: 13.5px;
-                font-weight: 700;
-                color: var(--accent, #3d5a73);
-                text-decoration: none;
-                white-space: nowrap;
-                flex-shrink: 0;
-            }}
-            .nav-tabs {{
-                display: flex;
-                align-items: center;
-                flex-wrap: nowrap;
-                gap: 6px;
-                flex: 1;
-                min-width: 0;
-            }}
-            .nav-tab {{
-                display: inline-block;
-                background-color: #fff;
-                border: 1px solid #ddd;
-                border-radius: 999px;
-                padding: 7px 11px;
-                font-size: 13.5px;
-                font-weight: 600;
-                color: var(--ink);
-                text-decoration: none;
-                white-space: nowrap;
-            }}
-            /* Allow wrapping below 1080px. The one-row nav (admin search icon + 2-digit auction count) needs ~954px, so it wraps only when it must. */
-            @media (max-width: 1080px) {{
-                .topnav {{
-                    flex-wrap: wrap;
-                }}
-                .nav-tabs {{
-                    flex-wrap: wrap;
-                    min-width: auto;
-                }}
-            }}
-            .nav-tab:hover {{
-                background-color: #f0f0f0;
-            }}
-            .nav-tab-active,
-            .nav-tab-active:hover {{
-                background-color: #1a1a1a;
-                border-color: #1a1a1a;
-                color: #fff;
-            }}
-            .nav-tab-disabled {{
-                color: #999;
-                cursor: default;
-            }}
-            .nav-tab-disabled:hover {{
-                background-color: #fff;
-            }}
-            .btn.nav-signin {{
-                background-color: #fff;
-                color: var(--ink);
-                border: 1px solid #ddd;
-                border-radius: 999px;
-                padding: 8px 16px;
-                font-size: 14px;
-                font-weight: 600;
-                white-space: nowrap;
-                margin-bottom: 0;
-                margin-left: auto;
-            }}
-            .btn.nav-signin:hover {{
-                background-color: #f0f0f0;
-            }}
-            .nav-icon-btn {{
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                width: 34px;
-                height: 34px;
-                background-color: #fff;
-                border: 1px solid #ddd;
-                border-radius: 999px;
-                color: var(--ink);
-                cursor: pointer;
-                padding: 0;
-            }}
-            .nav-icon-btn:hover {{
-                background-color: #f0f0f0;
-            }}
-            .deal-switcher-overlay {{
-                display: none;
-                position: fixed;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                background-color: rgba(0,0,0,0.5);
-                z-index: 2000;
-                padding-top: 12vh;
-            }}
-            .deal-switcher-overlay.show {{
-                display: block;
-            }}
-            .deal-switcher-box {{
-                background-color: #fff;
-                margin: 0 auto;
-                width: 90%;
-                max-width: 560px;
-                border-radius: 8px;
-                box-shadow: 0 8px 30px rgba(0,0,0,0.25);
-                overflow: hidden;
-                font-family: Arial, sans-serif;
-            }}
-            .deal-switcher-input {{
-                width: 100%;
-                box-sizing: border-box;
-                border: none;
-                border-bottom: 1px solid #ddd;
-                padding: 16px 18px;
-                font-size: 16px;
-                font-family: inherit;
-                outline: none;
-            }}
-            .deal-switcher-results {{
-                max-height: 50vh;
-                overflow-y: auto;
-            }}
-            .deal-switcher-row {{
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                gap: 10px;
-                padding: 10px 18px;
-                cursor: pointer;
-                font-size: 14px;
-                color: #333;
-            }}
-            .deal-switcher-row.active {{
-                background-color: #f0f4f8;
-            }}
-            .deal-switcher-label {{
-                flex: 1;
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
-            }}
-            .deal-switcher-copy {{
-                flex-shrink: 0;
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                width: 26px;
-                height: 26px;
-                background: none;
-                border: none;
-                border-radius: 4px;
-                cursor: pointer;
-                color: #666;
-                padding: 0;
-            }}
-            .deal-switcher-copy:hover {{
-                background-color: #e2e6ea;
-                color: #333;
-            }}
-            .deal-switcher-copy svg {{
-                width: 14px;
-                height: 14px;
-                fill: none;
-                stroke: currentColor;
-                stroke-width: 1.3;
-            }}
-            .deal-switcher-empty {{
-                padding: 16px 18px;
-                color: #888;
-                font-size: 14px;
-            }}
-            .navacct {{
-                position: relative;
-                margin-left: auto;
-            }}
-            .navacct-trigger {{
-                display: inline-block;
-                background-color: #fff;
-                border: 1px solid #ddd;
-                border-radius: 999px;
-                padding: 8px 16px;
-                font-size: 14px;
-                font-weight: 600;
-                color: var(--ink);
-                cursor: pointer;
-                white-space: nowrap;
-            }}
-            .navacct-trigger:hover {{
-                background-color: #f0f0f0;
-            }}
-            .navacct-menu {{
-                display: none;
-                position: absolute;
-                right: 0;
-                top: 100%;
-                margin-top: 6px;
-                background: #fff;
-                border-radius: 6px;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-                min-width: 220px;
-                padding: 6px 0;
-                z-index: 50;
-            }}
-            .navacct:hover .navacct-menu, .navacct:focus-within .navacct-menu {{
-                display: block;
-            }}
-            .navacct-item {{
-                display: block;
-                padding: 9px 16px;
-                font-size: 13px;
-                color: var(--ink);
-                text-decoration: none;
-                white-space: nowrap;
-            }}
-            .navacct-item:hover {{
-                background: #f4f4f4;
-            }}
-            .navacct-static {{
-                color: var(--text-secondary, #666);
-                font-weight: 600;
-                cursor: default;
-            }}
-            .navacct-static:hover {{
-                background: none;
-            }}
-            .navacct-disabled {{
-                color: #999;
-                cursor: default;
-            }}
-            .navacct-disabled:hover {{
-                background: none;
-            }}
-            .header {{
-                flex-wrap: wrap;
-            }}
-            .header-content {{
-                flex: 1;
-                min-width: 300px;
-            }}
-            .logo-container {{
-                margin: 0 20px;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-            }}
-            .company-logo {{
-                max-width: 120px;
-                max-height: 80px;
-                object-fit: contain;
-            }}
+            {PAGE_NAV_CSS}
             th {{
                 width: 20%;
             }}
@@ -3306,7 +3522,7 @@ def lambda_handler(event, context):
                 {bid_button_html}
             </div>
         </div>
-        {transfer_note_html}
+        {visibility_banner_html}{transfer_note_html}
         {unconfirmed_html}
         {bid_modal_html}
         {alt_live_html}
