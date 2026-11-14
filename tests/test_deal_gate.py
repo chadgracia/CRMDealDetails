@@ -322,10 +322,14 @@ class Withheld(unittest.TestCase):
         self.assertIn('name="website"', body)
         for word in ("CRM", "Investor Level", "tracking", "Pipeline"):
             self.assertNotIn(word, body.split("gate-box", 1)[1].split("</div>", 1)[0])
-        for c in ({"gg_id": gg_id("hal@x.com")}, {"gg_id": gg_id("ned@x.com")}):
-            b = self.body_for(c)["body"]
-            self.assertIn("Thanks for registering. Your access is being reviewed and we'll be in touch.", b)
-            self.assertNotIn("Send link", b)
+        b = self.body_for({"gg_id": gg_id("ned@x.com")})["body"]
+        self.assertIn("Thanks for registering. Your access is being reviewed and we'll be in touch.", b)
+        self.assertNotIn("Send link", b)
+        b = self.body_for({"gg_id": gg_id("hal@x.com")})["body"]      # Hold: self-confirm instead
+        self.assertIn("I confirm I am an accredited investor", b)
+        self.assertNotIn("Send link", b)
+        for word in ("CRM", "Investor Level", "tracking", "Pipeline"):
+            self.assertNotIn(word, b.split("gate-box", 1)[1].split("</div>", 1)[0])
 
     def test_same_output_for_any_user_agent(self):
         reset(lf, switch=True)
@@ -508,7 +512,7 @@ class ClosedAndAlt(unittest.TestCase):
 TERM = "31.17"   # a real offer term in the fixture
 
 
-# --- Hard block (Rainmaker / brokers / RMS source) -------------------------
+# --- Hard block (Rainmaker / brokers) ---------------------------------------
 SRC_KEY = "deal-gate/source-field.json"
 SRC_FIELD = "custom_label_9999001"
 HARD_PEOPLE = [
@@ -524,9 +528,9 @@ HARD_PEOPLE = [
      "custom_fields": {"custom_label_3923758": 7209227, "custom_label_3759163": 6888332}},
     {"id": 206, "first_name": "Int", "email": "int@y.com",                             # c: Intermediary - Other
      "custom_fields": {"custom_label_3923758": 6950563, "custom_label_3759163": [{"id": 6888333}]}},
-    {"id": 207, "first_name": "Src", "email": "src@y.com",                             # d: Source = RMS option
+    {"id": 207, "first_name": "Src", "email": "src@y.com",                             # Source = RMS: rule d removed
      "custom_fields": {"custom_label_3923758": 6950563, SRC_FIELD: 7300001}},
-    {"id": 208, "first_name": "Txt", "email": "txt@y.com",                             # d: Source text "RMS"
+    {"id": 208, "first_name": "Txt", "email": "txt@y.com",                             # Source text "RMS": not blocked
      "custom_fields": {"custom_label_3923758": 6950563, SRC_FIELD: " rms "}},
     {"id": 209, "first_name": "Dup", "email": "dup@y.com",                             # shared: hard + cleared
      "custom_fields": {"custom_label_3923758": 6950562, "custom_label_3759163": 6888332}},
@@ -535,10 +539,11 @@ HARD_PEOPLE = [
      "custom_fields": {"custom_label_3923758": 6950563, "custom_label_3759163": 6484810, SRC_FIELD: 7300002}},
 ]
 HARD_EMAILS = ["rob@rainmakersecurities.com", "amy@y.com", "staylor@spry.vc", "cob@y.com", "ffi@y.com",
-               "int@y.com", "src@y.com", "txt@y.com", "dup@y.com"]
+               "int@y.com", "dup@y.com"]
 
 
 def hard_reset(mod, switch=True, source=True):
+    """source=True also leaves an old Source-rule file in S3: it must be ignored."""
     reset(mod, switch=switch)
     S3.objects[(B, SLIM)] = json.dumps({"people": PEOPLE + HARD_PEOPLE}).encode()
     if source:
@@ -565,16 +570,16 @@ class HardBlock(unittest.TestCase):
         lf._people_slim_status_index()
         dg = lf._people_slim_cache["dg_by_id"]
         self.assertEqual(sorted(p for p, r in dg.items() if r[5]),
-                         ["201", "202", "203", "204", "205", "206", "207", "208", "209"])
-        self.assertEqual(lf._people_slim_cache["dg_field_counts"], {"transactor": 5, "source": 3})
+                         ["201", "202", "203", "204", "205", "206", "209"])
+        self.assertEqual(lf._people_slim_cache["dg_field_counts"], {"transactor": 5})
 
-    def test_source_rule_off_without_saved_field(self):
-        hard_reset(lf, source=False)
-        self.assertEqual(hard_state({"gg_id": gg_id("src@y.com")}), (False, "cleared"))
-        self.assertEqual(hard_state({"gg_id": gg_id("cob@y.com")}), (True, "blocked"))
-        hard_reset(lf)
-        S3.objects[(B, SRC_KEY)] = b'{"field_key": "not a field"}'
-        self.assertEqual(hard_state({"gg_id": gg_id("src@y.com")}), (False, "cleared"))
+    def test_source_rms_rule_removed(self):
+        for em in ("src@y.com", "txt@y.com"):
+            hard_reset(lf)                      # old source-field.json present in S3
+            self.assertEqual(hard_state({"gg_id": gg_id(em)}), (False, "cleared"), em)
+            self.assertNotIn(SRC_KEY, S3.gets)  # never read
+        self.assertFalse(hasattr(lf, "dg_source_rule"))
+        self.assertFalse(hasattr(lf, "DG_SOURCE_KEY"))
 
     def test_viewer_email_itself_without_record(self):
         for em in ("zoe@rainmakersecurities.com", "x@mail.rainmakerapac.com", "lh@lab-137.com"):
@@ -599,7 +604,7 @@ class HardBlock(unittest.TestCase):
     def test_hard_beats_valid_view_link(self):
         hard_reset(lf)
         with mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
-            tok = lf.dg_make_token("207")
+            tok = lf.dg_make_token("204")
         r = run(lf, qp={"v": tok})
         self.assertEqual(r["statusCode"], 302)
         cookie = r["cookies"][0].split(";")[0].split("=", 1)
@@ -607,7 +612,7 @@ class HardBlock(unittest.TestCase):
         body = run(lf, cookies={cookie[0]: cookie[1]})["body"]
         self.assertNotIn(TERM, body)
         self.assertIn("Your access is being reviewed", body)
-        for s in ("Rainmaker/broker", "Hard-blocked", "RMS source"):
+        for s in ("Rainmaker/broker", "Hard-blocked", "I confirm I am an accredited investor", 'name="t"'):
             self.assertNotIn(s, body)
 
     def test_switch_off_unchanged_for_hard_viewer(self):
@@ -616,6 +621,101 @@ class HardBlock(unittest.TestCase):
         self.assertIn(TERM, r["body"])
         self.assertNotIn('class="gated"', r["body"])
         self.assertFalse([k for k in S3.gets if SLIM in k or SRC_KEY in k])
+
+
+# --- Self-confirm (Hold viewers only) ----------------------------------------
+SC_OPT = 7300099
+IL_FIELDS = {"type": "person", "count": 1, "fields": [
+    {"id": 3923758, "key": "custom_label_3923758", "name": "Investor Level", "field_type": "dropdown",
+     "options": [{"id": 7161646, "name": "Hold: Screen for Substantive"},
+                 {"id": SC_OPT, "name": "Self-Confirmed  accredited"}]}]}
+
+
+def page(cookies=None, qp=None, env=None):
+    return run(lf, qp=qp, cookies=cookies, env=env)["body"]
+
+
+def form_token(body):
+    return body.split('name="t" value="', 1)[1].split('"', 1)[0]
+
+
+class SelfConfirmBox(unittest.TestCase):
+    def test_hold_viewer_gets_button_not_terms(self):
+        exp = int(time.time()) + 3600
+        for cookies in ({"gg_id": gg_id("hal@x.com")}, {"gg_view": view_tok("102", "viewc1", exp)}):
+            hard_reset(lf)
+            body = page(cookies)
+            self.assertNotIn(TERM, body)
+            self.assertIn("<p>Offer terms are shown to accredited investors.</p>", body)
+            self.assertIn('<button type="submit">I confirm I am an accredited investor</button>', body)
+            self.assertIn('action="https://trades.graciagroup.com/?view=self-confirm"', body)
+            self.assertIn('Not sure? <a href="https://www.rainmakersecurities.com/investor-qualification-form-for-natural-persons">'
+                          'Complete the investor qualification form</a>', body)
+            self.assertIn('name="website" class="gate-hp"', body)
+            self.assertNotIn("Your access is being reviewed", body)
+            with mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
+                self.assertEqual(lf.dg_verify_token(form_token(body), "scf1"), "102")
+
+    def test_no_button_for_blocked_hard_unmatched_or_no_secret(self):
+        for cookies, env in (({"gg_id": gg_id("ned@x.com")}, None),                 # Non-Accredited
+                             ({"gg_id": gg_id("rob@rainmakersecurities.com")}, None),  # hard block
+                             ({"gg_id": gg_id("cob@y.com")}, None),                 # broker
+                             ({"gg_id": gg_id("dup@y.com")}, None),                 # hard + cleared
+                             ({"gg_id": gg_id("nobody@x.com")}, None),              # pending, no record
+                             ({"gg_id": gg_id("hal@x.com")}, {"VIEW_LINK_SECRET": ""})):
+            hard_reset(lf)
+            body = page(cookies, env=env)
+            self.assertNotIn(TERM, body)
+            self.assertIn("Your access is being reviewed", body, cookies)
+            self.assertNotIn("I confirm I am an accredited investor", body, cookies)
+            self.assertNotIn("self-confirm", body)
+
+    def test_detail_and_token(self):
+        hard_reset(lf)
+        with mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
+            self.assertEqual(lf.dg_viewer_detail(event(None, {"gg_id": gg_id("hal@x.com")})), ("pending", ("102",)))
+            self.assertEqual(lf.dg_viewer_detail(event(None, {"gg_id": gg_id("nobody@x.com")})), ("pending", ()))
+            self.assertEqual(lf.dg_viewer_detail(event(None, {"gg_id": gg_id("ned@x.com")})), ("blocked", ()))
+            self.assertIsNone(lf.dg_self_confirm_token(event(None, {"gg_id": gg_id("ann@x.com")})))
+
+    def test_self_confirmed_level_is_cleared(self):
+        self.assertEqual(lf.dg_level_state([SC_OPT]), "cleared")
+        self.assertEqual(lf.dg_level_state(["7161646"]), "pending")
+        hard_reset(lf)
+        lf._people_slim_status_index()
+        lf.dg_mark_cleared(["102"], SC_OPT)
+        self.assertEqual(lf._people_slim_cache["dg_by_id"]["102"][0], frozenset({str(SC_OPT)}))
+        self.assertEqual(lf._people_slim_cache["dg_by_id"]["102"][1], "Hal")
+        self.assertEqual(hard_state({"gg_id": gg_id("hal@x.com")}), (False, "cleared"))
+
+    def test_gg_sc_cookie_bridges_refresh_lag_only_for_that_hold_person(self):
+        exp = int(time.time()) + 3600
+        cases = [({"gg_id": gg_id("hal@x.com"), "gg_sc": view_tok("102", "sc1", exp)}, (False, "cleared")),
+                 ({"gg_sc": view_tok("102", "sc1", exp)}, (True, "anon")),                # no identity
+                 ({"gg_id": gg_id("hal@x.com"), "gg_sc": view_tok("101", "sc1", exp)}, (True, "pending")),
+                 ({"gg_id": gg_id("hal@x.com"), "gg_sc": view_tok("102", "viewc1", exp)}, (True, "pending")),
+                 ({"gg_id": gg_id("hal@x.com"), "gg_sc": view_tok("102", "sc1", 1000)}, (True, "pending")),
+                 ({"gg_id": gg_id("ned@x.com"), "gg_sc": view_tok("103", "sc1", exp)}, (True, "blocked")),
+                 ({"gg_id": gg_id("cob@y.com"), "gg_sc": view_tok("204", "sc1", exp)}, (True, "blocked"))]
+        for cookies, want in cases:
+            hard_reset(lf)
+            self.assertEqual(hard_state(cookies), want, cookies)
+
+    def test_admin_preview_pending_shows_button_without_token(self):
+        for switch in (False, True):
+            hard_reset(lf, switch=switch)
+            body = page({"admin_key": ADMIN}, qp={"gate_preview": "pending"})
+            self.assertIn("I confirm I am an accredited investor", body)
+            self.assertIn('name="t" value=""', body)
+            hard_reset(lf, switch=switch)
+            body = page({"admin_key": ADMIN}, qp={"gate_preview": "blocked"})
+            self.assertNotIn("I confirm I am an accredited investor", body)
+
+    def test_switch_off_hold_viewer_unchanged(self):
+        hard_reset(lf, switch=False)
+        body = page({"gg_id": gg_id("hal@x.com")})
+        self.assertIn(TERM, body)
+        self.assertNotIn("I confirm I am an accredited investor", body)
 
 
 if __name__ == "__main__":
