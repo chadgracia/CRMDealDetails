@@ -1,0 +1,509 @@
+"""Deal gate tests. Fixtures only: stub S3 and stub HTTP, no live S3/SES/Pipeline.
+python3.12 -m unittest discover -s tests
+
+The module is loaded under its own name with its own boto3 stub, so these tests
+never share state with the other test files."""
+import base64
+import hashlib
+import hmac
+import importlib.util
+import io
+import json
+import os
+import sys
+import time
+import types
+import unittest
+import urllib.error
+from unittest import mock
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+FIXTURES = os.path.join(ROOT, "tests", "fixtures")
+IDENTITY_SECRET = "test-identity-secret"
+ADMIN = "test-admin-key"
+VIEW_SECRET = "test-view-secret"
+PD_SECRET = "test-pd-secret"
+B = "full-pipeline-cache"
+SLIM = "syndicate-dash/people-slim.json"
+NOW = 1_900_000_000          # fixed clock for token tests
+
+# Fixture deal: every withheld value is distinctive so a body search proves absence.
+DEAL_ID = "4242"
+DEAL_NAME = "Acme: Series Q Zebra SPV Lot"
+NET, GROSS, SHARES = 31.17, 33.29, 98765
+MIN_SIZE, MAX_SIZE = 271000, 838000
+NOTES = "Quokka allocation note"
+MGMT, CARRY, DEADLINE = 2.75, 17.5, "2031/07/19"
+SECRET_STRINGS = ["31.17", "33.29", "98,765", "98765", "271,000", "838,000", "271K", "838K",
+                  "Quokka", "Zebra", "Series Q", "2.75", "17.5", "2031-07-19", "Fund (SPV)",
+                  "SPV Details", "Send Question", "px=", "bidLoginModal"]
+
+
+def _deal():
+    return {
+        "id": int(DEAL_ID), "name": DEAL_NAME, "company_id": 5,
+        "updated_at": "2026/10/01 10:00:00 -0400", "summary": NOTES,
+        "deal_stage": {"id": 1, "name": "Firm"},
+        "custom_fields": {
+            "custom_label_1958": 5011675,            # Sell Order
+            "custom_label_3064360": [5077906],       # Structure (Fund)
+            "custom_label_3064369": NET, "custom_label_3064339": GROSS,
+            "custom_label_3070843": SHARES,
+            "custom_label_3065488": MIN_SIZE, "custom_label_3064645": MAX_SIZE,
+            "custom_label_3940558": MGMT, "custom_label_3940559": CARRY,
+            "custom_label_4006402": DEADLINE,
+            "custom_label_3994687": 0,                # Refresh 0: never Unconfirmed
+            "custom_label_3064333": 5077849,        # Series C
+        },
+    }
+
+
+COMPANY = {"id": 5, "name": "Acme", "description": "Acme builds rockets.",
+           "custom_fields": {"custom_label_3064363": 10.0, "custom_label_3790429": 2.0}}
+
+# people-slim.json: one person per Investor Level case
+P_CLEARED, P_HOLD, P_NONACC, P_BLANK, P_NEWOPT = "101", "102", "103", "104", "105"
+PEOPLE = [
+    {"id": 101, "first_name": "Ann", "last_name": "Clear", "email": "ann@x.com",
+     "company": {"name": "Ann Co"}, "custom_fields": {"custom_label_3923758": 6950563}},
+    {"id": 102, "first_name": "Hal", "last_name": "Hold", "email": "hal@x.com",
+     "custom_fields": {"custom_label_3923758": 7161646}},
+    {"id": 103, "first_name": "Ned", "last_name": "Non", "email": "ned@x.com",
+     "custom_fields": {"custom_label_3923758": [6950562]}},
+    {"id": 104, "first_name": "Bea", "last_name": "Blank", "email": "bea@x.com", "custom_fields": {}},
+    {"id": 105, "first_name": "Sam", "last_name": "Self", "email": "sam@x.com",
+     "custom_fields": {"custom_label_3923758": 9999999}},
+    # shared address: one blocked, one cleared -> cleared
+    {"id": 106, "first_name": "Two", "email": "two@x.com", "custom_fields": {"custom_label_3923758": 6950562}},
+    {"id": 107, "first_name": "Two", "email": "two@x.com", "custom_fields": {"custom_label_3923758": 6950564}},
+    # shared address: blocked + hold -> blocked
+    {"id": 108, "first_name": "Bh", "email": "bh@x.com", "custom_fields": {"custom_label_3923758": 6950562}},
+    {"id": 109, "first_name": "Bh", "email": "bh@x.com", "custom_fields": {"custom_label_3923758": 7161646}},
+]
+
+
+class NoSuchKey(Exception):
+    pass
+
+
+class FakeS3:
+    def __init__(self):
+        self.objects, self.gets, self.puts = {}, [], []
+
+    def get_object(self, Bucket, Key):
+        self.gets.append(Key)
+        if (Bucket, Key) not in self.objects:
+            raise NoSuchKey(f"{Bucket}/{Key}")
+        return {"Body": io.BytesIO(self.objects[(Bucket, Key)]), "ETag": '"e"'}
+
+    def head_object(self, Bucket, Key):
+        self.gets.append("HEAD " + Key)
+        if (Bucket, Key) not in self.objects:
+            raise NoSuchKey(f"{Bucket}/{Key}")
+        return {"ETag": '"%s"' % hashlib.md5(self.objects[(Bucket, Key)]).hexdigest(),
+                "LastModified": "2026-11-13T00:00:00Z"}
+
+    def put_object(self, Bucket, Key, Body, **kw):
+        self.puts.append(Key)
+        self.objects[(Bucket, Key)] = Body if isinstance(Body, bytes) else str(Body).encode()
+
+
+S3 = FakeS3()
+
+
+def load_module(path, name):
+    """Import a lambda_function file under its own name with the stub boto3."""
+    saved_boto, saved_env = sys.modules.get("boto3"), dict(os.environ)
+    sys.modules["boto3"] = types.SimpleNamespace(client=lambda *a, **k: S3)
+    os.environ.update({"IDENTITY_SECRET": IDENTITY_SECRET, "ADMIN_KEY": ADMIN})
+    S3.objects[("pipeline-token", "pipeline-jwt.json")] = json.dumps({"jwt": "x"}).encode()
+    try:
+        spec = importlib.util.spec_from_file_location(name, path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    finally:
+        if saved_boto is None:
+            sys.modules.pop("boto3", None)
+        else:
+            sys.modules["boto3"] = saved_boto
+        os.environ.clear()
+        os.environ.update(saved_env)
+    mod.boto3 = types.SimpleNamespace(client=lambda *a, **k: S3)
+    return mod
+
+
+class _Resp(io.BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def fake_urlopen(req, *a, **k):
+    url = req.full_url if hasattr(req, "full_url") else str(req)
+    if url.endswith("/deals/" + DEAL_ID):
+        return _Resp(json.dumps(_deal()).encode())
+    if url.endswith("/companies/5"):
+        return _Resp(json.dumps(COMPANY).encode())
+    raise urllib.error.URLError("offline")
+
+
+def reset(mod, switch=None, slim=True):
+    S3.objects = {("pipeline-token", "pipeline-jwt.json"): json.dumps({"jwt": "x"}).encode()}
+    S3.objects[("pipeline-token", "partner-desk-secret.json")] = json.dumps({"secret": PD_SECRET}).encode()
+    if switch is not None:
+        S3.objects[(B, "deal-gate.json")] = json.dumps({"enabled": switch, "updated_at": "x"}).encode()
+    if slim:
+        S3.objects[(B, SLIM)] = json.dumps({"people": PEOPLE}).encode()
+    S3.gets.clear()
+    S3.puts.clear()
+    if hasattr(mod, "_dg_switch_cache"):
+        mod._dg_switch_cache.update({"enabled": None, "checked_at": 0.0})
+    mod._people_slim_cache.update({"etag": None, "checked_at": 0.0, "by_id": None, "by_email": None,
+                                   "dg_by_id": None, "last_modified": None})
+    for c in ("_pd_secret_cache",):
+        getattr(mod, c).update({"secret": None, "failed_at": 0.0, "error": None})
+    mod._pd_access_cache.update({"people": None, "loaded_at": 0.0, "failed_at": 0.0, "error": None})
+
+
+def gg_id(email):
+    sig = hmac.new(IDENTITY_SECRET.encode(), email.encode(), hashlib.sha256).hexdigest()
+    return base64.urlsafe_b64encode(f"{email}|{sig}".encode()).decode().rstrip("=")
+
+
+def view_tok(pid, prefix, exp, secret=VIEW_SECRET):
+    sig = hmac.new(secret.encode(), f"{prefix}|{pid}|{exp}".encode(), hashlib.sha256).hexdigest()[:32]
+    return f"{pid}.{exp}.{sig}"
+
+
+def pd_tok(pid, exp):
+    sig = hmac.new(PD_SECRET.encode(), f"{pid}|{exp}".encode(), hashlib.sha256).hexdigest()[:32]
+    return f"{pid}.{exp}.{sig}"
+
+
+def event(qp=None, cookies=None, v2=True):
+    qp = dict(qp or {})
+    qp.setdefault("deal_id", DEAL_ID)
+    e = {"queryStringParameters": qp, "headers": {}}
+    if v2:
+        e.update({"version": "2.0", "rawPath": f"/deal/{DEAL_ID}",
+                  "rawQueryString": "&".join(f"{k}={v}" for k, v in qp.items())})
+    else:
+        e.update({"path": f"/deal/{DEAL_ID}"})
+    if cookies:
+        if v2:
+            e["cookies"] = [f"{k}={v}" for k, v in cookies.items()]
+        else:
+            e["headers"]["cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
+    return e
+
+
+lf = load_module(os.path.join(ROOT, "lambda_function.py"), "crm_lf_dealgate")
+
+
+def run(mod, qp=None, cookies=None, v2=True, env=None):
+    with mock.patch.object(mod.urllib.request, "urlopen", fake_urlopen), \
+            mock.patch.dict(os.environ, env if env is not None else {"VIEW_LINK_SECRET": VIEW_SECRET}):
+        return mod.lambda_handler(event(qp, cookies, v2), None)
+
+
+class SwitchOffIdentical(unittest.TestCase):
+    """With the switch OFF an anonymous visitor gets exactly today's page."""
+
+    def test_anon_deal_page_matches_pre_gate_golden(self):
+        golden = os.path.join(FIXTURES, "crm_deal_anon_golden.html")
+        for switch in (None, False):
+            reset(lf, switch=switch)
+            r = run(lf)
+            with open(golden, encoding="utf-8") as f:
+                self.assertEqual(r["body"], f.read())
+            self.assertEqual(r["headers"], {"Content-Type": "text/html"})
+            self.assertNotIn("cookies", r)
+            # anonymous: people-slim.json never touched
+            self.assertFalse([k for k in S3.gets if SLIM in k])
+
+    def test_switch_off_identified_viewer_gets_full_page_without_lookup(self):
+        reset(lf, switch=False)
+        r = run(lf, cookies={"gg_id": gg_id("ned@x.com")})
+        self.assertIn("31.17", r["body"])
+        self.assertNotIn('class="gated"', r["body"])
+
+
+class ViewerStates(unittest.TestCase):
+    def state(self, cookies=None, qp=None):
+        reset(lf, switch=True)
+        with mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
+            e = event(qp, cookies)
+            return lf.dg_decide(e, e["queryStringParameters"],
+                                lf._get_cookie(e, "admin_key") == ADMIN)
+
+    def test_states(self):
+        exp = int(time.time()) + 3600
+        cases = [
+            ({}, "anon", True),
+            ({"gg_id": gg_id("ann@x.com")}, "cleared", False),
+            ({"gg_id": gg_id("hal@x.com")}, "pending", True),
+            ({"gg_id": gg_id("ned@x.com")}, "blocked", True),
+            ({"gg_id": gg_id("bea@x.com")}, "cleared", False),      # blank level
+            ({"gg_id": gg_id("sam@x.com")}, "cleared", False),      # unlisted option id
+            ({"gg_id": gg_id("nobody@x.com")}, "pending", True),    # no matching person
+            ({"gg_id": gg_id("two@x.com")}, "cleared", False),      # blocked + cleared
+            ({"gg_id": gg_id("bh@x.com")}, "blocked", True),        # blocked + hold
+            ({"gg_view": view_tok(P_CLEARED, "viewc1", exp)}, "cleared", False),
+            ({"gg_view": view_tok(P_HOLD, "viewc1", exp)}, "pending", True),
+            ({"gg_view": view_tok(P_NONACC, "viewc1", exp)}, "blocked", True),
+            ({"gg_view": view_tok(P_CLEARED, "view1", exp)}, "anon", True),  # link token != cookie token
+            ({"admin_key": ADMIN}, "cleared", False),
+        ]
+        for cookies, want, gated in cases:
+            g, st, prev = self.state(cookies)
+            self.assertEqual((st, g), (want, gated), cookies)
+            self.assertFalse(prev)
+
+    def test_anonymous_never_loads_people(self):
+        self.state({})
+        self.assertFalse([k for k in S3.gets if SLIM in k])
+
+    def test_index_unreadable(self):
+        reset(lf, switch=True, slim=False)
+        e = event(None, {"gg_id": gg_id("ned@x.com")})
+        self.assertEqual(lf.dg_decide(e, {}, False)[:2], (False, "cleared"))
+        e = event(None, {})
+        self.assertEqual(lf.dg_decide(e, {}, False)[:2], (True, "anon"))
+
+    def test_admin_preview_regardless_of_switch(self):
+        for switch in (False, True, None):
+            for st in ("anon", "pending", "blocked", "cleared"):
+                reset(lf, switch=switch)
+                r = run(lf, qp={"gate_preview": st}, cookies={"admin_key": ADMIN})
+                if st == "cleared":
+                    self.assertIn("31.17", r["body"])
+                else:
+                    self.assertIn('class="gated"', r["body"])
+                    for s in ("31.17", "Quokka"):
+                        self.assertNotIn(s, r["body"])
+                self.assertNotIn("Copy link for", r["body"])   # rendered as that viewer
+
+    def test_preview_ignored_for_non_admin(self):
+        reset(lf, switch=False)
+        r = run(lf, qp={"gate_preview": "anon"})
+        self.assertIn("31.17", r["body"])
+
+
+class Withheld(unittest.TestCase):
+    def body_for(self, cookies=None, qp=None, v2=True):
+        reset(lf, switch=True)
+        return run(lf, qp=qp, cookies=cookies, v2=v2)
+
+    def test_gated_page_contains_no_real_values(self):
+        for cookies in ({}, {"gg_id": gg_id("hal@x.com")}, {"gg_id": gg_id("ned@x.com")}):
+            r = self.body_for(cookies)
+            body = r["body"]
+            for s in SECRET_STRINGS:
+                self.assertNotIn(s, body, (cookies, s))
+            self.assertIn('class="gated"', body)
+            self.assertIn("$00.00", body)
+            self.assertIn("Acme", body)
+            self.assertIn("Acme builds rockets.", body)          # description kept
+            self.assertIn("$10.00", body)                        # Company LR kept
+            self.assertIn('<link rel="canonical" href="https://trades.graciagroup.com/deal/4242">', body)
+            self.assertNotIn("noindex", body)
+            self.assertIn("<title>Acme Pre-IPO Stock – Sell</title>", body)
+            self.assertEqual(r["headers"].get("Cache-Control"), "private, no-store")
+
+    def test_gate_box_copy(self):
+        body = self.body_for({})["body"]
+        self.assertIn("Offer terms are shown to investors we work with", body)
+        self.assertIn("Already working with us? Enter your email and we'll send you a one-click link.", body)
+        self.assertIn("If that address is on file, a link is on its way.", body)
+        self.assertIn(">Request access</a>", body)
+        self.assertIn("/signup?client_id=", body)
+        self.assertIn('name="website"', body)
+        for word in ("CRM", "Investor Level", "tracking", "Pipeline"):
+            self.assertNotIn(word, body.split("gate-box", 1)[1].split("</div>", 1)[0])
+        for c in ({"gg_id": gg_id("hal@x.com")}, {"gg_id": gg_id("ned@x.com")}):
+            b = self.body_for(c)["body"]
+            self.assertIn("Thanks for registering. Your access is being reviewed and we'll be in touch.", b)
+            self.assertNotIn("Send link", b)
+
+    def test_same_output_for_any_user_agent(self):
+        reset(lf, switch=True)
+        e1, e2 = event(), event()
+        e2["headers"]["user-agent"] = "Mozilla/5.0 (compatible; Googlebot/2.1)"
+        with mock.patch.object(lf.urllib.request, "urlopen", fake_urlopen), \
+                mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
+            a = lf.lambda_handler(e1, None)["body"]
+            b = lf.lambda_handler(e2, None)["body"]
+        self.assertEqual(a, b)
+
+    def test_cleared_viewer_sees_terms(self):
+        body = self.body_for({"gg_id": gg_id("ann@x.com")})["body"]
+        self.assertIn("31.17", body)
+        self.assertIn("Quokka", body)
+
+
+class Tokens(unittest.TestCase):
+    def setUp(self):
+        reset(lf)
+        self.env = mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET})
+        self.env.start()
+
+    def tearDown(self):
+        self.env.stop()
+
+    def test_roundtrip_and_format(self):
+        tok = lf.dg_make_token(P_CLEARED, now=NOW)
+        self.assertEqual(tok, view_tok(P_CLEARED, "view1", NOW + 183 * 86400))
+        self.assertEqual(lf.dg_verify_token(tok, now=NOW), P_CLEARED)
+
+    def test_expired(self):
+        tok = lf.dg_make_token(P_CLEARED, now=NOW)
+        self.assertIsNone(lf.dg_verify_token(tok, now=NOW + 183 * 86400))
+        self.assertIsNone(lf.dg_verify_token(tok, now=NOW + 183 * 86400 + 5))
+
+    def test_tampered(self):
+        tok = lf.dg_make_token(P_CLEARED, now=NOW)
+        pid, exp, sig = tok.split(".")
+        for bad in (f"{P_HOLD}.{exp}.{sig}", f"{pid}.{int(exp) + 1}.{sig}",
+                    f"{pid}.{exp}.{('0' if sig[0] != '0' else '1') + sig[1:]}",
+                    view_tok(pid, "view1", exp, secret="other-secret"), tok + "x", "", None):
+            self.assertIsNone(lf.dg_verify_token(bad, now=NOW), bad)
+        self.assertIsNone(lf.dg_verify_token(tok, "viewc1", now=NOW))   # wrong purpose
+
+    def test_no_secret_disables_links(self):
+        tok = lf.dg_make_token(P_CLEARED, now=NOW)
+        with mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": ""}):
+            self.assertIsNone(lf.dg_make_token(P_CLEARED, now=NOW))
+            self.assertIsNone(lf.dg_verify_token(tok, now=NOW))
+            self.assertIsNone(lf.dg_view_cookie(P_CLEARED))
+
+
+class LinksAndCookies(unittest.TestCase):
+    def test_valid_v_sets_cookie_and_redirects_without_v(self):
+        reset(lf, switch=False)
+        with mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
+            tok = lf.dg_make_token(P_CLEARED)
+        r = run(lf, qp={"v": tok, "utm": "a b"})
+        self.assertEqual(r["statusCode"], 302)
+        self.assertEqual(r["headers"]["Location"], f"/deal/{DEAL_ID}?utm=a+b&deal_id={DEAL_ID}")
+        self.assertEqual(len(r["cookies"]), 1)
+        c = r["cookies"][0]
+        self.assertTrue(c.startswith("gg_view="))
+        for attr in ("Max-Age=31536000", "Path=/", "Secure", "HttpOnly", "SameSite=Lax"):
+            self.assertIn(attr, c)
+        pid = lf.dg_verify_token(c.split(";")[0].split("=", 1)[1], "viewc1")
+        with mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
+            self.assertEqual(lf.dg_verify_token(c.split(";")[0].split("=", 1)[1], "viewc1"), P_CLEARED)
+        self.assertIsNone(pid)   # secret not in env outside the patch -> disabled
+
+    def test_invalid_or_expired_v_renders_normally(self):
+        reset(lf, switch=False)
+        for tok in ("101.1.0123456789abcdef0123456789abcdef", view_tok(P_CLEARED, "view1", 1000)):
+            r = run(lf, qp={"v": tok})
+            self.assertEqual(r["statusCode"], 200)
+            self.assertNotIn("cookies", r)
+
+    def test_v_disabled_without_secret(self):
+        reset(lf, switch=False)
+        tok = view_tok(P_CLEARED, "view1", int(time.time()) + 999)
+        r = run(lf, qp={"v": tok}, env={"VIEW_LINK_SECRET": ""})
+        self.assertEqual(r["statusCode"], 200)
+
+    def test_gp_sets_gg_view_alongside_gg_pd_v2_and_v1(self):
+        exp = int(time.time()) + 3600
+        access = {"people": {P_CLEARED: {"intermediary": True, "pd": 7218530}}}
+        for v2 in (True, False):
+            reset(lf, switch=True)
+            S3.objects[(B, "partner-desk/access.json")] = json.dumps(access).encode()
+            r = run(lf, qp={"gp": pd_tok(P_CLEARED, exp)}, v2=v2)
+            if v2:
+                cookies = r["cookies"]
+                self.assertNotIn("Set-Cookie", r["headers"])
+            else:
+                self.assertNotIn("cookies", r)
+                self.assertNotIn("Set-Cookie", r["headers"])
+                cookies = r["multiValueHeaders"]["Set-Cookie"]
+            names = sorted(c.split("=", 1)[0] for c in cookies)
+            self.assertEqual(names, ["gg_pd", "gg_view"], v2)
+            self.assertIn("31.17", r["body"])            # gp pid is cleared -> terms shown
+            self.assertIn("pdOverlay", r["body"])        # partner desk unchanged
+
+    def test_gp_switch_off_unchanged(self):
+        exp = int(time.time()) + 3600
+        reset(lf, switch=False)
+        S3.objects[(B, "partner-desk/access.json")] = json.dumps(
+            {"people": {P_CLEARED: {"intermediary": True, "pd": 7218530}}}).encode()
+        r = run(lf, qp={"gp": pd_tok(P_CLEARED, exp)})
+        self.assertEqual([c.split("=", 1)[0] for c in r["cookies"]], ["gg_pd"])
+
+    def test_add_cookies_keeps_existing(self):
+        r = lf.dg_add_cookies({"headers": {"Set-Cookie": "a=1"}}, {"path": "/x"}, ["b=2"])
+        self.assertEqual(r["multiValueHeaders"]["Set-Cookie"], ["a=1", "b=2"])
+        r = lf.dg_add_cookies({"cookies": ["a=1"], "headers": {}}, {"rawPath": "/x"}, ["b=2"])
+        self.assertEqual(r["cookies"], ["a=1", "b=2"])
+
+
+class ViewOnly(unittest.TestCase):
+    """gg_view only unlocks terms: it never signs anyone in."""
+
+    def test_gg_view_never_yields_gg_id_or_sso(self):
+        exp = int(time.time()) + 3600
+        reset(lf, switch=True)
+        cookies = {"gg_view": view_tok(P_CLEARED, "viewc1", exp)}
+        r = run(lf, cookies=cookies)
+        body = r["body"]
+        self.assertIn("31.17", body)                     # terms unlocked
+        self.assertNotIn("sso=", body)                   # no SSO handoff anywhere
+        self.assertNotIn("Signed in as", body)
+        self.assertIn(">Sign In</a>", body)
+        self.assertFalse([c for c in r.get("cookies", []) if c.startswith("gg_id")])
+        with mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
+            self.assertIsNone(lf._read_identity_email(event(None, cookies)))
+
+    def test_redacted_log_event(self):
+        e = event({"v": "secret-token", "admin_key": "k", "x": "1"}, {"gg_id": "abc"})
+        e["body"] = "email=a@b.c"
+        red = json.dumps(lf.dg_redacted_event(e))
+        for s in ("secret-token", '"k"', "abc", "a@b.c"):
+            self.assertNotIn(s, red)
+        self.assertIn('"x": "1"', red)
+
+
+class AdminBox(unittest.TestCase):
+    def test_admin_copy_box_only_for_admins(self):
+        reset(lf, switch=True)
+        self.assertIn("Copy link for", run(lf, cookies={"admin_key": ADMIN})["body"])
+        reset(lf, switch=True)
+        self.assertNotIn("Copy link for", run(lf, cookies={"gg_id": gg_id("ann@x.com")})["body"])
+        reset(lf, switch=False)
+        body = run(lf)["body"]
+        self.assertNotIn("Copy link for", body)
+        self.assertNotIn("view-link", body)
+
+
+class ClosedAndAlt(unittest.TestCase):
+    def test_closed_public_page_gated(self):
+        reset(lf, switch=True)
+        closed = _deal()
+        closed["deal_stage"] = {"id": 9, "name": "Won"}
+        S3.objects[("pipeline-public-deal-data", "pipeline_deals.json")] = json.dumps([
+            {"id": 77, "company": "Acme", "type": "Sell Order", "min_deal_size": 456000,
+             "max_deal_size": 654000, "structure": "Fund (SPV)", "stage": "Firm"}]).encode()
+
+        def uo(req, *a, **k):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if url.endswith("/deals/" + DEAL_ID):
+                return _Resp(json.dumps(closed).encode())
+            return fake_urlopen(req)
+        with mock.patch.object(lf.urllib.request, "urlopen", uo), \
+                mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
+            body = lf.lambda_handler(event(), None)["body"]
+        for s in SECRET_STRINGS + ["456K", "654K", "$456", "$654"]:
+            self.assertNotIn(s, body, s)
+        self.assertIn("Sell · Deal 77", body)
+        self.assertIn("no longer available", body)
+
+
+if __name__ == "__main__":
+    unittest.main()

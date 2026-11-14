@@ -1,0 +1,711 @@
+
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <script async src="https://www.googletagmanager.com/gtag/js?id=G-L9JN3TRR2S"></script><script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','G-L9JN3TRR2S');</script>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Acme Pre-IPO Stock – Series C SPV Units</title>
+        <meta name="description" content="Acme Series C SPV units for accredited investors. Min. $271K. Ask the seller questions or place a bid.">
+        <link rel="canonical" href="https://trades.graciagroup.com/deal/4242">
+        <link rel="stylesheet" href="https://s3.us-east-1.amazonaws.com/main.css/master.css">
+        <style>
+            /* Page-specific layout only. The shared Gracia look (font stack,
+               page container, header, buttons, tables, news list, disclaimer)
+               comes from master.css. */
+            .topnav {
+                display: flex;
+                align-items: center;
+                flex-wrap: nowrap;
+                gap: 12px;
+                padding: 10px 0;
+                margin-bottom: 10px;
+                border-bottom: 1px solid #ddd;
+            }
+            .nav-brand {
+                display: inline-block;
+                background-color: #eef2f6;
+                border: 1px solid #d7dee6;
+                border-radius: 999px;
+                padding: 7px 11px;
+                font-size: 13.5px;
+                font-weight: 700;
+                color: var(--accent, #3d5a73);
+                text-decoration: none;
+                white-space: nowrap;
+                flex-shrink: 0;
+            }
+            .nav-tabs {
+                display: flex;
+                align-items: center;
+                flex-wrap: nowrap;
+                gap: 6px;
+                flex: 1;
+                min-width: 0;
+            }
+            .nav-tab {
+                display: inline-block;
+                background-color: #fff;
+                border: 1px solid #ddd;
+                border-radius: 999px;
+                padding: 7px 11px;
+                font-size: 13.5px;
+                font-weight: 600;
+                color: var(--ink);
+                text-decoration: none;
+                white-space: nowrap;
+            }
+            /* Allow wrapping below 1080px. The one-row nav (admin search icon + 2-digit auction count) needs ~954px, so it wraps only when it must. */
+            @media (max-width: 1080px) {
+                .topnav {
+                    flex-wrap: wrap;
+                }
+                .nav-tabs {
+                    flex-wrap: wrap;
+                    min-width: auto;
+                }
+            }
+            .nav-tab:hover {
+                background-color: #f0f0f0;
+            }
+            .nav-tab-active,
+            .nav-tab-active:hover {
+                background-color: #1a1a1a;
+                border-color: #1a1a1a;
+                color: #fff;
+            }
+            .nav-tab-disabled {
+                color: #999;
+                cursor: default;
+            }
+            .nav-tab-disabled:hover {
+                background-color: #fff;
+            }
+            .btn.nav-signin {
+                background-color: #fff;
+                color: var(--ink);
+                border: 1px solid #ddd;
+                border-radius: 999px;
+                padding: 8px 16px;
+                font-size: 14px;
+                font-weight: 600;
+                white-space: nowrap;
+                margin-bottom: 0;
+                margin-left: auto;
+            }
+            .btn.nav-signin:hover {
+                background-color: #f0f0f0;
+            }
+            .nav-icon-btn {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 34px;
+                height: 34px;
+                background-color: #fff;
+                border: 1px solid #ddd;
+                border-radius: 999px;
+                color: var(--ink);
+                cursor: pointer;
+                padding: 0;
+            }
+            .nav-icon-btn:hover {
+                background-color: #f0f0f0;
+            }
+            .deal-switcher-overlay {
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background-color: rgba(0,0,0,0.5);
+                z-index: 2000;
+                padding-top: 12vh;
+            }
+            .deal-switcher-overlay.show {
+                display: block;
+            }
+            .deal-switcher-box {
+                background-color: #fff;
+                margin: 0 auto;
+                width: 90%;
+                max-width: 560px;
+                border-radius: 8px;
+                box-shadow: 0 8px 30px rgba(0,0,0,0.25);
+                overflow: hidden;
+                font-family: Arial, sans-serif;
+            }
+            .deal-switcher-input {
+                width: 100%;
+                box-sizing: border-box;
+                border: none;
+                border-bottom: 1px solid #ddd;
+                padding: 16px 18px;
+                font-size: 16px;
+                font-family: inherit;
+                outline: none;
+            }
+            .deal-switcher-results {
+                max-height: 50vh;
+                overflow-y: auto;
+            }
+            .deal-switcher-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+                padding: 10px 18px;
+                cursor: pointer;
+                font-size: 14px;
+                color: #333;
+            }
+            .deal-switcher-row.active {
+                background-color: #f0f4f8;
+            }
+            .deal-switcher-label {
+                flex: 1;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .deal-switcher-copy {
+                flex-shrink: 0;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 26px;
+                height: 26px;
+                background: none;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                color: #666;
+                padding: 0;
+            }
+            .deal-switcher-copy:hover {
+                background-color: #e2e6ea;
+                color: #333;
+            }
+            .deal-switcher-copy svg {
+                width: 14px;
+                height: 14px;
+                fill: none;
+                stroke: currentColor;
+                stroke-width: 1.3;
+            }
+            .deal-switcher-empty {
+                padding: 16px 18px;
+                color: #888;
+                font-size: 14px;
+            }
+            .navacct {
+                position: relative;
+                margin-left: auto;
+            }
+            .navacct-trigger {
+                display: inline-block;
+                background-color: #fff;
+                border: 1px solid #ddd;
+                border-radius: 999px;
+                padding: 8px 16px;
+                font-size: 14px;
+                font-weight: 600;
+                color: var(--ink);
+                cursor: pointer;
+                white-space: nowrap;
+            }
+            .navacct-trigger:hover {
+                background-color: #f0f0f0;
+            }
+            .navacct-menu {
+                display: none;
+                position: absolute;
+                right: 0;
+                top: 100%;
+                margin-top: 6px;
+                background: #fff;
+                border-radius: 6px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                min-width: 220px;
+                padding: 6px 0;
+                z-index: 50;
+            }
+            .navacct:hover .navacct-menu, .navacct:focus-within .navacct-menu {
+                display: block;
+            }
+            .navacct-item {
+                display: block;
+                padding: 9px 16px;
+                font-size: 13px;
+                color: var(--ink);
+                text-decoration: none;
+                white-space: nowrap;
+            }
+            .navacct-item:hover {
+                background: #f4f4f4;
+            }
+            .navacct-static {
+                color: var(--text-secondary, #666);
+                font-weight: 600;
+                cursor: default;
+            }
+            .navacct-static:hover {
+                background: none;
+            }
+            .navacct-disabled {
+                color: #999;
+                cursor: default;
+            }
+            .navacct-disabled:hover {
+                background: none;
+            }
+            .header {
+                flex-wrap: wrap;
+            }
+            .header-content {
+                flex: 1;
+                min-width: 300px;
+            }
+            .logo-container {
+                margin: 0 20px;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+            }
+            .company-logo {
+                max-width: 120px;
+                max-height: 80px;
+                object-fit: contain;
+            }
+            th {
+                width: 20%;
+            }
+            td {
+                width: 30%;
+            }
+            .separator {
+                width: 1px;
+                background-color: var(--border-strong);
+                padding: 0;
+            }
+            .price-comparison {
+                display: inline-block;
+                white-space: nowrap;
+            }
+            .price-comparison span {
+                font-size: 65%;
+            }
+            .company-summary {
+                font-size: 1.2em;
+                font-style: italic;
+                color: var(--text-secondary);
+                margin: 15px 0 20px 0;
+                line-height: 1.6;
+            }
+            .catalyst {
+                background-color: #faf8f3;
+                border-left: 4px solid var(--accent);
+                padding: 10px 16px;
+                margin: 0 0 20px 0;
+                font-size: 1.05em;
+                color: var(--text);
+            }
+            .catalyst-label {
+                display: block;
+                font-size: 0.72em;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                color: var(--accent);
+                font-weight: bold;
+                margin-bottom: 3px;
+            }
+            /* Deal stage, inline in the header metadata line. Green (--pos) and
+               red (--neg) come from master.css; the palette has no amber, so
+               --stage-amber is the one added colour, mixed to sit at the same
+               muted depth as --pos / --neg rather than a bright warning yellow. */
+            :root {
+                --stage-amber: #8b6423;
+            }
+            .deal-status {
+                margin-left: 6px;
+                white-space: nowrap;
+            }
+            .deal-status span {
+                font-weight: 600;
+            }
+            .status-firm     { color: var(--pos); }
+            .status-inquiry  { color: var(--stage-amber); }
+            .status-obsolete { color: var(--neg); }
+            .status-neutral  { color: var(--text); }
+            .onboard-status { white-space: nowrap; }
+            .onboard-ok { color: var(--pos); font-weight: 600; }
+            .deal-body { display:flex; gap:24px; align-items:flex-start; flex-wrap:wrap; }
+            .deal-main { flex:1; min-width:320px; }
+            .qa-box { width:300px; border:1px solid var(--border-strong); border-radius:8px;
+                       padding:14px 16px; background:#faf8f3; font-size:13px; }
+            .qa-box h2 { margin:0 0 10px 0; font-size:15px; }
+            .side-col { width:300px; display:flex; flex-direction:column; gap:16px; }
+            .side-col .qa-box { width:100%; box-sizing:border-box; }
+            .similar-box { width:100%; box-sizing:border-box; border:1px solid var(--border-strong);
+                            border-radius:8px; padding:14px 16px; background:#faf8f3; font-size:13px; }
+            .similar-box h2 { margin:0 0 10px 0; font-size:15px; }
+            .similar-pills { display:flex; flex-wrap:wrap; gap:6px; }
+            .similar-pill { display:inline-block; background:#CCDBEA; border:none;
+                             color:var(--ink); font-weight:500; font-size:14px; padding:6px 14px;
+                             border-radius:999px; text-decoration:none;
+                             transition:background-color 0.15s, color 0.15s; }
+            .similar-pill:hover { background:#B7CBE1; }
+            .similar-note { margin:10px 0 0; font-size:11px; color:var(--text-secondary); }
+            .weekly-box { border:none; border-radius:8px;
+                           padding:20px 24px; background:var(--accent, #3a5a75);
+                           font-size:13px; margin-top:24px; display:flex;
+                           align-items:center; gap:16px 24px; flex-wrap:wrap; }
+            .weekly-text { flex:1 1 300px; }
+            .weekly-box h2 { margin:0 0 4px 0; font-size:16px; color:#fff; }
+            .weekly-lead { margin:0; font-size:12.5px; color:rgba(255,255,255,0.85);
+                            line-height:1.45; }
+            .weekly-form { display:flex; gap:8px; align-items:center; flex:1 1 280px; }
+            .weekly-form .qa-email { margin:0; flex:1; width:auto; border:none;
+                                      border-radius:6px; padding:9px 12px; }
+            .weekly-form .qa-email:focus { outline:2px solid #fff; outline-offset:1px; }
+            .weekly-form .qa-send { margin:0; width:auto; padding:9px 18px;
+                                     white-space:nowrap; flex:none; background:#fff;
+                                     color:var(--accent, #3a5a75); }
+            .weekly-form .qa-send:hover { opacity:1; background:#f0ece3; }
+            .weekly-note { margin:0; font-size:11px; color:rgba(255,255,255,0.7);
+                            flex-basis:100%; }
+            .weekly-hp { position:absolute !important; left:-9999px !important;
+                          height:1px; width:1px; overflow:hidden; }
+            .similar-count { font-size:10px; font-weight:600; margin-left:4px;
+                              color:inherit; opacity:0.65; }
+            .qa-row { display:flex; align-items:flex-start; gap:8px; padding:7px 0; border-bottom:1px solid var(--border-strong); cursor:pointer; }
+            .qa-row input[type=checkbox] { margin-top:3px; flex:none; }
+            .qa-bid { margin:2px 0 6px 26px; display:flex; gap:6px; }
+            .qa-bid input { width:50%; padding:5px; font-size:12px; box-sizing:border-box; }
+            .qa-bid-note { margin:0 0 6px 26px; font-size:12px; color:var(--text-secondary); }
+            .qa-fees { margin:2px 0 6px 26px; display:flex; gap:6px; }
+            .qa-fees label { flex:1; display:flex; flex-direction:column; gap:2px; font-size:11px; color:var(--text-secondary); }
+            .qa-fees input { width:100%; padding:5px; font-size:12px; box-sizing:border-box; }
+            .qa-email { width:100%; padding:7px; margin:8px 0 0; box-sizing:border-box; font-size:13px; }
+            .qa-send { width:100%; padding:9px; margin-top:16px; font-size:13px; font-weight:600; cursor:pointer; border:none; border-radius:6px; background:var(--accent); color:#fff; }
+            .qa-send:hover { opacity:0.9; }
+            .qa-row:last-child { border-bottom:none; }
+            .qa-row.no-line { border-bottom:none; }
+            .qa-fees, .qa-bid { border-bottom:1px solid var(--border-strong); padding-bottom:12px; }
+            .qa-q { color:var(--text); margin-bottom:5px; }
+            .qa-a { color:var(--text-secondary); }
+            .qa-ask { display:inline-block; padding:3px 12px; font-size:12px;
+                       border:1px solid var(--border-strong); border-radius:4px;
+                       color:var(--text-secondary); background:#fff; text-decoration:none; }
+            .qa-ask:hover { background:#f0ece3; }
+            @media (max-width:860px) { .qa-box { width:100%; } }
+            .copy-id { display:inline-flex; vertical-align:middle; margin:0 4px; color:var(--text-secondary); cursor:pointer; }
+            .copy-id:hover { color:var(--accent); }
+            .copy-id.copied { color:#16a34a; }
+            .bid-btn {
+                background-color: #3d7355;
+                color: #fff;
+            }
+            .bid-btn:hover {
+                background-color: #345f48;
+            }
+            .bid-modal-overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, 0.45);
+                align-items: center;
+                justify-content: center;
+                z-index: 1000;
+            }
+            .bid-modal {
+                background: #fff;
+                border-radius: 8px;
+                padding: 24px 28px;
+                max-width: 360px;
+                width: 90%;
+                box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+            }
+            .bid-modal h3 {
+                margin: 0 0 10px;
+                color: var(--text);
+            }
+            .bid-modal p {
+                margin: 0 0 18px;
+                color: var(--text-secondary);
+                font-size: 14px;
+            }
+            .bid-modal-actions {
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 16px;
+            }
+            .bid-modal-signup {
+                flex-basis: 100%;
+                margin-top: 10px;
+                font-size: 13px;
+                color: var(--text-secondary);
+            }
+            .bid-modal-signup a {
+                color: var(--accent);
+            }
+            .bid-modal-cancel {
+                color: var(--text-secondary);
+                font-size: 14px;
+                text-decoration: underline;
+            }
+            .deal-subline { font-size: 15px; color: var(--text-secondary); margin: 2px 0 4px; }
+            .alt-live-list { margin: 0 0 12px; padding-left: 18px; }
+            .alt-live-list li { margin: 4px 0; }
+            .unconfirmed-notice { display:flex; align-items:center; gap:8px; margin:8px 0 4px;
+                padding:6px 12px; background:#fff7e6; color:#b45309; border:1px solid #b45309;
+                border-radius:6px; font-size:13px; line-height:1.4; }
+            .unconfirmed-clock { flex:none; cursor:help; }
+            .unconfirmed-text { flex:1; }
+            .unconfirmed-ask { flex:none; margin-left:auto; padding:3px 10px; font-size:12px;
+                font-weight:600; color:#b45309; background:#fff; border:1px solid #b45309;
+                border-radius:5px; cursor:pointer; }
+            .unconfirmed-ask:hover { background:#fdebc8; }
+            @media (max-width:600px) { .unconfirmed-notice { flex-wrap:wrap; } }
+        </style>
+    </head>
+    <body>
+        <nav class="topnav"><a href="https://www.graciagroup.com" class="nav-brand">Gracia Group</a><div class="nav-tabs"><a href="https://trades.graciagroup.com/" class="nav-tab nav-tab-active" aria-current="page">Indications</a><a href="https://us-east-1dsttcaqx7.auth.us-east-1.amazoncognito.com/login?client_id=71vrglkidm13jb73u7nje3d1t2&response_type=code&scope=openid+email&redirect_uri=https://trades.graciagroup.com&state=aHR0cHM6Ly9kZXNrLmdyYWNpYWdyb3VwLmNvbS8" class="nav-tab">Portfolio &amp; Watchlist</a><a href="https://us-east-1dsttcaqx7.auth.us-east-1.amazoncognito.com/login?client_id=71vrglkidm13jb73u7nje3d1t2&response_type=code&scope=openid+email&redirect_uri=https://trades.graciagroup.com&state=aHR0cHM6Ly9kZXNrLmdyYWNpYWdyb3VwLmNvbS8_dmlldz1kZW1hbmQ" class="nav-tab">Demand Board</a></div><button type="button" id="dealSwitcherBtn" class="nav-icon-btn" title="Switch deal (Ctrl+K)" aria-label="Switch deal"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"><circle cx="6.5" cy="6.5" r="4.5" fill="none" stroke="currentColor" stroke-width="1.4"></circle><line x1="9.8" y1="9.8" x2="14" y2="14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></line></svg></button><a href="https://us-east-1dsttcaqx7.auth.us-east-1.amazoncognito.com/login?client_id=71vrglkidm13jb73u7nje3d1t2&response_type=code&scope=openid+email&redirect_uri=https://trades.graciagroup.com&state=aHR0cHM6Ly9kZXNrLmdyYWNpYWdyb3VwLmNvbS9kZWFsLzQyNDI_ZGVhbF9pZD00MjQy" class="btn nav-signin">Sign In</a></nav>
+        <div class="header">
+            <div class="header-content">
+                <h1><strong>Acme Pre-IPO Stock – Series C SPV Units</strong></h1>
+                <div class="deal-subline">Series Q Zebra SPV Lot · Special Purpose Vehicle</div>
+                <div class="deal-id">Deal ID: 4242 <span class="copy-id" onclick="copyDealId('4242', this)" title="Copy Deal ID"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></span> (Updated: Oct 01, 2026)<span class="deal-status" title="Price and size confirmed.">&bull; Status: <span class="status-firm">Firm</span></span></div>
+                <script>
+                function copyDealId(id, el) {
+                    navigator.clipboard.writeText(id).then(function() {
+                        el.classList.add('copied');
+                        el.setAttribute('title', 'Copied!');
+                        setTimeout(function() { el.classList.remove('copied'); el.setAttribute('title', 'Copy Deal ID'); }, 1200);
+                    });
+                }
+                </script>
+            </div>
+            <div class="logo-container">
+                <img src="https://bannerlogos.s3.us-east-1.amazonaws.com/Acme.png" 
+                     alt="Acme logo" 
+                     class="company-logo" 
+                     onerror="console.log('Logo failed to load: ' + this.src); this.src='https://bannerlogos.s3.us-east-1.amazonaws.com/default.png';">
+            </div>
+            <div class="button-group">
+                <a href="#" class="btn bid-btn" onclick="document.getElementById('bidLoginModal').style.display='flex';return false;">Bid</a>
+            </div>
+        </div>
+        
+        
+        <div id="bidLoginModal" class="bid-modal-overlay"><div class="bid-modal"><h3>Sign in to place your bid</h3><p>We&rsquo;ll bring you right back to the bidding page.</p><div class="bid-modal-actions"><a href="https://us-east-1dsttcaqx7.auth.us-east-1.amazoncognito.com/login?client_id=71vrglkidm13jb73u7nje3d1t2&response_type=code&scope=openid+email&redirect_uri=https://trades.graciagroup.com&state=aHR0cHM6Ly9kZXNrLmdyYWNpYWdyb3VwLmNvbS9iaWQvP25hbWU9QWNtZSZzaWRlPWJ1eSZkZWFsX2lkPTQyNDImcHg9MzMuMjk" class="btn bid-btn">Sign In</a><div class="bid-modal-signup">First time here? <a href="https://us-east-1dsttcaqx7.auth.us-east-1.amazoncognito.com/signup?client_id=71vrglkidm13jb73u7nje3d1t2&response_type=code&scope=openid+email&redirect_uri=https://trades.graciagroup.com&state=aHR0cHM6Ly9kZXNrLmdyYWNpYWdyb3VwLmNvbS9iaWQvP25hbWU9QWNtZSZzaWRlPWJ1eSZkZWFsX2lkPTQyNDImcHg9MzMuMjk">Create an account</a> &mdash; use the email where you receive our deal updates.</div><a href="#" class="bid-modal-cancel" onclick="document.getElementById('bidLoginModal').style.display='none';return false;">Cancel</a></div></div></div>
+        
+        <div class="company-summary">Acme builds rockets.</div>
+        
+
+        <div class="deal-body">
+            <div class="deal-main">
+<table><tr><th>Type</th><td>Sell Order</td><td class='separator'></td><th>Company LR (PPS)</th><td>$10.00</td></tr><tr><th>Class</th><td></td><td class='separator'></td><th>Company LR Val ($Bn)</th><td>$2.00</td></tr><tr><th>Net</th><td>$31.17 ($6.2Bn) <span style="color: #1f7a4d">(+212% ↑)</span></td><td class='separator'></td><th>Min Deal Size</th><td>$271,000</td></tr><tr><th>Gross</th><td>$33.29 ($6.7Bn) <span style="color: #1f7a4d">(+233% ↑)</span></td><td class='separator'></td><th>Max Deal Size</th><td>$838,000</td></tr><tr><th>Shares</th><td>98,765</td><td class='separator'></td><th>Notes</th><td>Quokka allocation note</td></tr></table>
+
+        <div id="spvSection" style="display: ">
+        <h2>SPV Details&thinsp;*</h2>
+        <table><tr><th>Deadline</th><td>2031-07-19</td><td class='separator'></td><th>Management Fee</th><td>2.75%</td></tr><tr><th>Layers</th><td></td><td class='separator'></td><th>Carry</th><td>17.5%</td></tr><tr><th>Seller Role</th><td></td><td class='separator'></td><th>Seller Fee</th><td></td></tr><tr><th>Price Status</th><td></td><td class='separator'></td><th>Partner Fee</th><td></td></tr><tr><th>Data Room / VDR Available</th><td>?</td><td class='separator'></td><th></th><td></td></tr></table>
+        <p style="font-size:13.5px;color:#555;margin:10px 0 0 2px;font-style:italic">* Fees shown are the seller&rsquo;s SPV terms only and do not include broker commission, which is quoted separately.</p>
+        </div>
+<div class="weekly-box"><div class="weekly-text"><h2>Accredited investor?</h2><p class="weekly-lead">Get the weekly list of every live trade &mdash; prices, structures, and new offerings, every Monday.</p></div><form method="POST" action="https://desk.graciagroup.com/update/" class="weekly-form"><input type="hidden" name="signup" value="weekly"><input type="hidden" name="deal_id" value="4242"><input type="hidden" name="deal_name" value="Acme: Series Q Zebra SPV Lot"><input type="text" name="website" class="weekly-hp" tabindex="-1" autocomplete="off" aria-hidden="true"><input type="email" name="signup_email" placeholder="Your email" required class="qa-email"><button type="submit" class="qa-send">Get the list</button></form><p class="weekly-note">For accredited investors only. Unsubscribe anytime.</p></div>
+        <!-- News Section -->
+        <div id="newsSection" class="news-section">
+            
+        </div>
+            </div>
+            <div class="side-col"><aside class="qa-box"><h2>Send Question to Seller</h2><form method="POST" action="https://desk.graciagroup.com/update/"><input type="hidden" name="qa" value="submit"><input type="hidden" name="deal_id" value="4242"><label class="qa-row" style="font-weight:600"><input type="checkbox" onclick='var b=this.checked;this.closest("form").querySelectorAll("input[name^=q_]").forEach(function(c){c.checked=b});'><span class="qa-q">Select all</span></label><label class="qa-row no-line"><input type="checkbox" name="q_accept_bid" value="1"><span class="qa-q">Would you accept a bid of $___/share (gross)?</span></label><div class="qa-bid"><input type="number" name="bid_amount" step="any" placeholder="Bid $/share (gross)"><input type="number" name="bid_size" step="any" placeholder="Size $ (opt)"></div><div class="qa-bid-note">Gross = the all-in price per share you'd pay.</div><label class="qa-row"><input type="checkbox" name="q_deadline" value="1"><span class="qa-q">When is the deadline to commit?</span></label><label class="qa-row"><input type="checkbox" name="q_class" value="1"><span class="qa-q">Are these shares common or preferred?</span></label><label class="qa-row"><input type="checkbox" name="q_est_valuation" value="1"><span class="qa-q">What is the estimated valuation?</span></label><label class="qa-row"><input type="checkbox" name="q_seller_fee" value="1"><span class="qa-q">What is the seller's one-time fee?</span></label><label class="qa-row no-line"><input type="checkbox" name="q_fee_structure" value="1"><span class="qa-q">Would you accept this fee structure?</span></label><div class="qa-fees"><label>One-time<input type="text" inputmode="decimal" name="fee_onetime" value=""></label><label>Man<input type="text" inputmode="decimal" name="fee_man" value="2.75"></label><label>Carry<input type="text" inputmode="decimal" name="fee_carry" value="17.5"></label><label>Ticket $<input type="number" name="fee_ticket" step="any" placeholder="e.g. 1000000"></label></div><label class="qa-row"><input type="checkbox" name="q_data_room_avail" value="1"><span class="qa-q">Is a data room available for diligence?</span></label><label class="qa-row"><input type="checkbox" name="q_fund_exemption" value="1"><span class="qa-q">Is this a 3(c)(1) or 3(c)(7) exemption?</span></label><input type="text" name="buyer_name" placeholder="Your name" class="qa-email"><input type="email" name="buyer_email" placeholder="Your email (for the answers)" required class="qa-email"><button type="submit" class="qa-send">Send</button></form></aside></div>
+        </div>
+        <hr>
+        <div id="disclaimer">
+            <p>DISCLOSURE: Chad Gracia ("Gracia") is a principal of The Gracia Group, LLC ("Gracia Group") and a registered agent of Rainmaker Securities, LLC ("RMS"). Gracia Group is a consulting firm and outside business activity of Gracia. Gracia Group is not affiliated with RMS. Rainmaker Securities, LLC ("RMS") is a FINRA registered broker-dealer and SIPC member. Find this broker-dealer and its agents on BrokerCheck. Our relationship summary can be found on the RMS website.</p>
+            <p>RMS is engaged by its clients to make referrals to buyers or sellers of private securities ("Securities"). If such client closes a Securities transaction with a buyer or seller so referred, RMS is entitled to a success fee from the client. Such success fee may be in the form of cash or in warrants to purchase securities of the client or client's affiliate. RMS or RMS representatives may hold equity in its issuer clients or in the issuers of securities purchased or sold by the parties to a transaction.</p>
+            <p>This communication is confidential and is addressed only to its intended recipient. This communication does not represent an offer or solicitation to buy or sell Securities. Such an offer must be made via definitive legal documentation by the seller of securities.</p>
+            <p>Investments in the Securities are speculative and involve a high degree of risk. An investor in the Securities should have little to no need for liquidity in the foreseeable future and have sufficient finances to withstand the loss of the entire investment.</p>
+            <p>RMS does not recommend the purchase or sale of Securities. Potential buyers or sellers of the Securities should seek professional counsel prior to entering into any transaction.</p>
+            <p>Chad Gracia is a registered agent of Rainmaker Securities, LLC (“RMS”) and a principal of Gracia Group. RMS is a FINRA registered broker-dealer and SIPC member. Find RMS and its agents on BrokerCheck. The RMS relationship summary can be found on the RMS website.  RMS is not an affiliate of Gracia Group. All securities transactions conducted by Chad Gracia will be conducted via RMS.</p>
+        </div> 
+        
+        <div id="dealSwitcherModal" class="deal-switcher-overlay">
+            <div class="deal-switcher-box">
+                <input type="text" id="dealSwitcherInput" class="deal-switcher-input" placeholder="Search a company&hellip;" autocomplete="off" spellcheck="false">
+                <div id="dealSwitcherResults" class="deal-switcher-results"></div>
+            </div>
+        </div>
+        <script>
+        (function () {
+            var COPY_ICON_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M10.5 3.5v-1a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1"></path></svg>';
+            var CHECK_ICON_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8.5l3.5 3.5L13 5"></path></svg>';
+            function copyTextToClipboard(text) {
+                if (navigator.clipboard && window.isSecureContext) {
+                    return navigator.clipboard.writeText(text);
+                }
+                return new Promise(function (resolve, reject) {
+                    var ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.setAttribute('readonly', '');
+                    ta.style.position = 'fixed';
+                    ta.style.top = '-1000px';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    var ok = false;
+                    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+                    document.body.removeChild(ta);
+                    ok ? resolve() : reject(new Error('Copy failed'));
+                });
+            }
+            var cache = null;
+            var modal = document.getElementById('dealSwitcherModal');
+            var input = document.getElementById('dealSwitcherInput');
+            var results = document.getElementById('dealSwitcherResults');
+            var btn = document.getElementById('dealSwitcherBtn');
+            var rows = [];
+            var idx = -1;
+
+            function fmtSize(v) {
+                if (v === null || v === undefined || v === '') return '';
+                var n = Number(v);
+                if (!isFinite(n)) return '';
+                if (n >= 1000000) {
+                    var m = Math.round((n / 1000000) * 10) / 10;
+                    return '$' + (m % 1 === 0 ? m.toFixed(0) : m) + 'M';
+                }
+                if (n >= 1000) return '$' + Math.round(n / 1000) + 'K';
+                return '$' + Math.round(n);
+            }
+            function fmtRange(lo, hi) {
+                var a = fmtSize(lo), b = fmtSize(hi);
+                if (a && b) return a === b ? a : (a + '\u2013' + b);
+                return a || b || '';
+            }
+            function esc(s) {
+                return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) {
+                    return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+                });
+            }
+            function renderRows(list) {
+                rows = list;
+                idx = list.length ? 0 : -1;
+                if (!list.length) {
+                    results.innerHTML = '<div class="deal-switcher-empty">No matching deals.</div>';
+                    return;
+                }
+                results.innerHTML = list.map(function (d, i) {
+                    var label = d.status !== undefined
+                        ? esc(d.company) + ' &middot; ' + esc(d.side) + ' ' + esc(fmtRange(d.size_min, d.size_max)) + ' &middot; ' + esc(d.status)
+                        : [d.company, d.side, d.net,
+                           d.min_size && d.max_size && d.min_size !== d.max_size ? d.min_size + '\u2013' + d.max_size : (d.min_size || d.max_size)
+                          ].filter(Boolean).map(esc).join(' &middot; ');
+                    return '<div class="deal-switcher-row' + (i === 0 ? ' active' : '') + '" data-idx="' + i + '" data-id="' + esc(d.id) + '">' +
+                        '<span class="deal-switcher-label">' + label + '</span>' +
+                        '<button type="button" class="deal-switcher-copy" data-id="' + esc(d.id) + '" title="Copy link" aria-label="Copy link">' + COPY_ICON_SVG + '</button>' +
+                        '</div>';
+                }).join('');
+            }
+            function setActive(newIdx) {
+                var rowEls = results.querySelectorAll('.deal-switcher-row');
+                if (!rowEls.length) return;
+                idx = Math.max(0, Math.min(newIdx, rowEls.length - 1));
+                rowEls.forEach(function (el, i) {
+                    el.classList.toggle('active', i === idx);
+                });
+                rowEls[idx].scrollIntoView({block: 'nearest'});
+            }
+            function applyFilter() {
+                var q = input.value.trim().toLowerCase();
+                var list = !cache ? [] : (!q ? cache : cache.filter(function (d) {
+                    return (d.company || '').toLowerCase().indexOf(q) !== -1;
+                }));
+                renderRows(list);
+            }
+            function goToDeal(id) {
+                window.location.href = 'https://trades.graciagroup.com/deal/' + encodeURIComponent(id);
+            }
+            function openModal() {
+                modal.classList.add('show');
+                input.value = '';
+                results.innerHTML = '';
+                setTimeout(function () { input.focus(); }, 0);
+                if (cache) {
+                    renderRows(cache);
+                    return;
+                }
+                results.innerHTML = '<div class="deal-switcher-empty">Loading&hellip;</div>';
+                fetch('/?view=public-deal-index', {credentials: 'same-origin'})
+                    .then(function (r) { if (!r.ok) throw new Error('bad status'); return r.json(); })
+                    .then(function (data) {
+                        cache = (data || []).slice().sort(function (a, b) {
+                            return new Date(b.updated || 0) - new Date(a.updated || 0);
+                        });
+                        renderRows(cache);
+                    })
+                    .catch(function () {
+                        results.innerHTML = '<div class="deal-switcher-empty">Failed to load deals.</div>';
+                    });
+            }
+            function closeModal() {
+                modal.classList.remove('show');
+            }
+
+            if (btn) btn.addEventListener('click', openModal);
+            document.addEventListener('keydown', function (e) {
+                if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+                    e.preventDefault();
+                    openModal();
+                    return;
+                }
+                if (!modal.classList.contains('show')) return;
+                if (e.key === 'Escape') {
+                    closeModal();
+                } else if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setActive(idx + 1);
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setActive(idx - 1);
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (idx >= 0 && rows[idx]) goToDeal(rows[idx].id);
+                }
+            });
+            input.addEventListener('input', applyFilter);
+            modal.addEventListener('click', function (e) {
+                if (e.target === modal) closeModal();
+            });
+            results.addEventListener('click', function (e) {
+                var copyBtn = e.target.closest ? e.target.closest('.deal-switcher-copy') : null;
+                if (copyBtn) {
+                    e.stopPropagation();
+                    var id = copyBtn.getAttribute('data-id');
+                    copyTextToClipboard('https://trades.graciagroup.com/deal/' + id).then(function () {
+                        copyBtn.innerHTML = CHECK_ICON_SVG;
+                        copyBtn.title = 'Copied';
+                        clearTimeout(copyBtn._copyTimer);
+                        copyBtn._copyTimer = setTimeout(function () {
+                            copyBtn.innerHTML = COPY_ICON_SVG;
+                            copyBtn.title = 'Copy link';
+                        }, 1200);
+                    });
+                    return;
+                }
+                var row = e.target.closest ? e.target.closest('.deal-switcher-row') : null;
+                if (row) goToDeal(row.getAttribute('data-id'));
+            });
+            results.addEventListener('mousemove', function (e) {
+                var row = e.target.closest ? e.target.closest('.deal-switcher-row') : null;
+                if (!row) return;
+                setActive(parseInt(row.getAttribute('data-idx'), 10));
+            });
+        })();
+        </script>
+    
+    </body>
+
+    </html>
+    
