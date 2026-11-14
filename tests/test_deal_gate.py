@@ -160,6 +160,8 @@ def reset(mod, switch=None, slim=True):
     S3.puts.clear()
     if hasattr(mod, "_dg_switch_cache"):
         mod._dg_switch_cache.update({"enabled": None, "checked_at": 0.0})
+        mod._dg_approved_cache.update({"ids": {}, "checked_at": 0.0})
+        mod._dg_queue_seen.clear()
     mod._people_slim_cache.update({"etag": None, "checked_at": 0.0, "by_id": None, "by_email": None,
                                    "dg_by_id": None, "last_modified": None})
     for c in ("_pd_secret_cache",):
@@ -245,13 +247,14 @@ class ViewerStates(unittest.TestCase):
             ({"gg_id": gg_id("ann@x.com")}, "cleared", False),
             ({"gg_id": gg_id("hal@x.com")}, "pending", True),
             ({"gg_id": gg_id("ned@x.com")}, "blocked", True),
-            ({"gg_id": gg_id("bea@x.com")}, "cleared", False),      # blank level
-            ({"gg_id": gg_id("sam@x.com")}, "cleared", False),      # unlisted option id
+            ({"gg_id": gg_id("bea@x.com")}, "pending", True),       # blank level
+            ({"gg_id": gg_id("sam@x.com")}, "pending", True),       # unlisted option id
             ({"gg_id": gg_id("nobody@x.com")}, "pending", True),    # no matching person
             ({"gg_id": gg_id("two@x.com")}, "cleared", False),      # blocked + cleared
             ({"gg_id": gg_id("bh@x.com")}, "blocked", True),        # blocked + hold
             ({"gg_view": view_tok(P_CLEARED, "viewc1", exp)}, "cleared", False),
-            ({"gg_view": view_tok(P_HOLD, "viewc1", exp)}, "pending", True),
+            ({"gg_view": view_tok(P_HOLD, "viewc1", exp)}, "cleared", False),   # personal link clears
+            ({"gg_view": view_tok(P_BLANK, "viewc1", exp)}, "cleared", False),
             ({"gg_view": view_tok(P_NONACC, "viewc1", exp)}, "blocked", True),
             ({"gg_view": view_tok(P_CLEARED, "view1", exp)}, "anon", True),  # link token != cookie token
             ({"admin_key": ADMIN}, "cleared", False),
@@ -623,12 +626,11 @@ class HardBlock(unittest.TestCase):
         self.assertFalse([k for k in S3.gets if SLIM in k or SRC_KEY in k])
 
 
-# --- Self-confirm (Hold viewers only) ----------------------------------------
-SC_OPT = 7300099
-IL_FIELDS = {"type": "person", "count": 1, "fields": [
-    {"id": 3923758, "key": "custom_label_3923758", "name": "Investor Level", "field_type": "dropdown",
-     "options": [{"id": 7161646, "name": "Hold: Screen for Substantive"},
-                 {"id": SC_OPT, "name": "Self-Confirmed  accredited"}]}]}
+# --- Self-confirm (blank / Unknown / Hold viewers; never clears) -------------
+SC_OPT = 7223459
+THANKS = "Thank you. Your access is being reviewed and we&#x27;ll be in touch."
+QUEUE = "deal-gate/queue.json"
+APPROVED = "deal-gate/approved.json"
 
 
 def page(cookies=None, qp=None, env=None):
@@ -642,7 +644,7 @@ def form_token(body):
 class SelfConfirmBox(unittest.TestCase):
     def test_hold_viewer_gets_button_not_terms(self):
         exp = int(time.time()) + 3600
-        for cookies in ({"gg_id": gg_id("hal@x.com")}, {"gg_view": view_tok("102", "viewc1", exp)}):
+        for cookies, pid in (({"gg_id": gg_id("hal@x.com")}, "102"), ({"gg_id": gg_id("bea@x.com")}, "104")):
             hard_reset(lf)
             body = page(cookies)
             self.assertNotIn(TERM, body)
@@ -654,7 +656,7 @@ class SelfConfirmBox(unittest.TestCase):
             self.assertIn('name="website" class="gate-hp"', body)
             self.assertNotIn("Your access is being reviewed", body)
             with mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
-                self.assertEqual(lf.dg_verify_token(form_token(body), "scf1"), "102")
+                self.assertEqual(lf.dg_verify_token(form_token(body), "scf1"), pid)
 
     def test_no_button_for_blocked_hard_unmatched_or_no_secret(self):
         for cookies, env in (({"gg_id": gg_id("ned@x.com")}, None),                 # Non-Accredited
@@ -673,43 +675,81 @@ class SelfConfirmBox(unittest.TestCase):
     def test_detail_and_token(self):
         hard_reset(lf)
         with mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
-            self.assertEqual(lf.dg_viewer_detail(event(None, {"gg_id": gg_id("hal@x.com")})), ("pending", ("102",)))
-            self.assertEqual(lf.dg_viewer_detail(event(None, {"gg_id": gg_id("nobody@x.com")})), ("pending", ()))
-            self.assertEqual(lf.dg_viewer_detail(event(None, {"gg_id": gg_id("ned@x.com")})), ("blocked", ()))
+            self.assertEqual(lf.dg_viewer_detail(event(None, {"gg_id": gg_id("hal@x.com")})), ("pending", ("102",), False))
+            self.assertEqual(lf.dg_viewer_detail(event(None, {"gg_id": gg_id("bea@x.com")})), ("pending", ("104",), False))
+            self.assertEqual(lf.dg_viewer_detail(event(None, {"gg_id": gg_id("sam@x.com")})), ("pending", (), False))
+            self.assertEqual(lf.dg_viewer_detail(event(None, {"gg_id": gg_id("nobody@x.com")})), ("pending", (), False))
+            self.assertEqual(lf.dg_viewer_detail(event(None, {"gg_id": gg_id("ned@x.com")})), ("blocked", (), False))
             self.assertIsNone(lf.dg_self_confirm_token(event(None, {"gg_id": gg_id("ann@x.com")})))
 
-    def test_self_confirmed_level_is_cleared(self):
-        self.assertEqual(lf.dg_level_state([SC_OPT]), "cleared")
-        self.assertEqual(lf.dg_level_state(["7161646"]), "pending")
+    def test_self_confirmed_level_stays_pending_with_thanks(self):
+        self.assertEqual(lf.dg_level_state([SC_OPT]), "pending")
         hard_reset(lf)
         lf._people_slim_status_index()
-        lf.dg_mark_cleared(["102"], SC_OPT)
-        self.assertEqual(lf._people_slim_cache["dg_by_id"]["102"][0], frozenset({str(SC_OPT)}))
-        self.assertEqual(lf._people_slim_cache["dg_by_id"]["102"][1], "Hal")
-        self.assertEqual(hard_state({"gg_id": gg_id("hal@x.com")}), (False, "cleared"))
+        lf.dg_mark_level(["102"], SC_OPT)
+        self.assertEqual(hard_state({"gg_id": gg_id("hal@x.com")}), (True, "pending"))
+        body = page({"gg_id": gg_id("hal@x.com")})
+        self.assertNotIn(TERM, body)
+        self.assertIn(THANKS, body)
+        self.assertNotIn("I confirm I am an accredited investor", body)
 
-    def test_gg_sc_cookie_bridges_refresh_lag_only_for_that_hold_person(self):
+    def test_gg_sc_cookie_only_shows_thanks(self):
         exp = int(time.time()) + 3600
-        cases = [({"gg_id": gg_id("hal@x.com"), "gg_sc": view_tok("102", "sc1", exp)}, (False, "cleared")),
-                 ({"gg_sc": view_tok("102", "sc1", exp)}, (True, "anon")),                # no identity
-                 ({"gg_id": gg_id("hal@x.com"), "gg_sc": view_tok("101", "sc1", exp)}, (True, "pending")),
-                 ({"gg_id": gg_id("hal@x.com"), "gg_sc": view_tok("102", "viewc1", exp)}, (True, "pending")),
-                 ({"gg_id": gg_id("hal@x.com"), "gg_sc": view_tok("102", "sc1", 1000)}, (True, "pending")),
-                 ({"gg_id": gg_id("ned@x.com"), "gg_sc": view_tok("103", "sc1", exp)}, (True, "blocked")),
-                 ({"gg_id": gg_id("cob@y.com"), "gg_sc": view_tok("204", "sc1", exp)}, (True, "blocked"))]
-        for cookies, want in cases:
+        cases = [({"gg_id": gg_id("hal@x.com"), "gg_sc": view_tok("102", "sc1", exp)}, (True, "pending"), True),
+                 ({"gg_id": gg_id("hal@x.com"), "gg_sc": view_tok("101", "sc1", exp)}, (True, "pending"), False),
+                 ({"gg_id": gg_id("hal@x.com"), "gg_sc": view_tok("102", "sc1", 1000)}, (True, "pending"), False),
+                 ({"gg_id": gg_id("ned@x.com"), "gg_sc": view_tok("103", "sc1", exp)}, (True, "blocked"), False)]
+        for cookies, want, thanks in cases:
             hard_reset(lf)
             self.assertEqual(hard_state(cookies), want, cookies)
+            hard_reset(lf)
+            body = page(cookies)
+            self.assertNotIn(TERM, body)
+            self.assertEqual(THANKS in body, thanks, cookies)
 
-    def test_admin_preview_pending_shows_button_without_token(self):
+    def test_admin_preview_values(self):
         for switch in (False, True):
             hard_reset(lf, switch=switch)
-            body = page({"admin_key": ADMIN}, qp={"gate_preview": "pending"})
+            body = page({"admin_key": ADMIN}, qp={"gate_preview": "confirm"})
             self.assertIn("I confirm I am an accredited investor", body)
             self.assertIn('name="t" value=""', body)
             hard_reset(lf, switch=switch)
-            body = page({"admin_key": ADMIN}, qp={"gate_preview": "blocked"})
+            body = page({"admin_key": ADMIN}, qp={"gate_preview": "confirmed"})
+            self.assertIn(THANKS, body)
             self.assertNotIn("I confirm I am an accredited investor", body)
+            for prev in ("pending", "blocked"):
+                hard_reset(lf, switch=switch)
+                self.assertNotIn("I confirm I am an accredited investor",
+                                 page({"admin_key": ADMIN}, qp={"gate_preview": prev}))
+
+    def test_deal_page_never_writes_queue(self):
+        hard_reset(lf)
+        page({"gg_id": gg_id("nobody@x.com")})
+        page({"gg_id": gg_id("hal@x.com")})
+        self.assertNotIn(QUEUE, S3.puts)
+
+    def test_approved_clears_unless_hard(self):
+        from datetime import datetime, timezone
+        now = time.time()
+        hard_reset(lf)
+        S3.objects[(B, APPROVED)] = json.dumps({
+            "102": datetime.fromtimestamp(now - 60, timezone.utc).isoformat(),
+            "104": datetime.fromtimestamp(now - 4 * 3600, timezone.utc).isoformat(),
+            "201": datetime.fromtimestamp(now - 60, timezone.utc).isoformat()}).encode()
+        self.assertEqual(hard_state({"gg_id": gg_id("hal@x.com")}), (False, "cleared"))
+        self.assertIn(TERM, page({"gg_id": gg_id("hal@x.com")}))
+        self.assertEqual(hard_state({"gg_id": gg_id("bea@x.com")})[1], "pending")      # older than 3 h
+        self.assertEqual(hard_state({"gg_id": gg_id("rob@rainmakersecurities.com")})[1], "blocked")
+
+    def test_each_level_value(self):
+        want = {"6950561": "pending", "7161646": "pending", "6950562": "blocked", "7162165": "cleared",
+                "7223459": "pending", "6950563": "cleared", "7209227": "cleared", "6950564": "cleared",
+                "1234567": "pending"}
+        for opt, st in want.items():
+            self.assertEqual(lf.dg_level_state([opt]), st, opt)
+            self.assertEqual(lf.dg_level_state([int(opt)]), st, opt)
+        self.assertEqual(lf.dg_level_state([]), "pending")
+        self.assertEqual(lf.dg_level_state(None), "pending")
 
     def test_switch_off_hold_viewer_unchanged(self):
         hard_reset(lf, switch=False)
