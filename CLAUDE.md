@@ -27,8 +27,8 @@ by a GitHub Action on push to `main`.
   with `ast` instead.
 - `map_custom_fields` maps PipelineCRM `custom_label_*` ids to names; `map_option_value` maps
   option ids to labels.
-- Company news via NewsAPI. `NEWS_SKIP_COMPANIES` (lowercased names) suppresses the News
-  section for noisy companies.
+- No company news section (the NewsAPI feature and its key were removed). The catalyst
+  "Recent Development" block (`custom_label_3999603`) is unrelated and stays.
 
 ## HTML / CSS gotcha
 - The entire page is ONE big f-string (`html_content`). Any literal `{`/`}` inside it (all the

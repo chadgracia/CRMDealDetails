@@ -12,15 +12,6 @@ import hashlib
 import re
 from datetime import datetime, timedelta, timezone  # NEW: Import for date handling
 
-API_KEY = "defe67185ffd4993874558be8c4eb29b"  # Your actual NewsAPI key
-
-# Companies whose news search returns mostly junk -- the News section is skipped
-# for these. To turn news off for a company, add its name here (case-insensitive,
-# matched against the company name exactly). To turn it back on, remove the line.
-NEWS_SKIP_COMPANIES = {
-    "1x",
-}
-
 QUESTION_CATALOG_BUYER = [   # shown on SELL orders (a buyer asking about the seller)
     {"id": "still_active", "q": "Is this order still active?", "field": None},
     {"id": "accept_bid",   "q": "Would you accept a bid of $___/share (gross)?",                    "field": None},
@@ -2751,31 +2742,6 @@ def render_weekly_signup(deal_id, deal_name):
     )
 
 
-def test_news_api(company_name, max_articles=5):
-    """Fetch news articles for a given company using urllib."""
-    # Construct the URL for the API call
-    url = f"https://newsapi.org/v2/everything?q={urllib.parse.quote(company_name)}&from={(datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')}&sortBy=publishedAt&pageSize={max_articles}&language=en&apiKey={API_KEY}"
-    req = urllib.request.Request(url)
-
-    try:
-        # Make the API call
-        with urllib.request.urlopen(req) as response:
-            if response.status == 200:
-                # Parse and return JSON response if successful
-                return json.loads(response.read().decode())
-            else:
-                # Log error if API call fails
-                logger.error(f"API Error: {response.status} - {response.read().decode()}")
-                return None
-    except urllib.error.URLError as e:
-        # Log URLError if the request fails
-        logger.error(f"Request failed: {e}")
-        return None
-
-if __name__ == "__main__":
-    news_data = test_news_api("SpaceX")
-    print(news_data)
-
 # --- Partner Desk pop-up ----------------------------------------------------
 # Intermediaries (co-brokers / foreign finders) arriving with a signed handoff
 # token (?gp= or the gg_pd cookie) get a blocking overlay after 5s. Everything
@@ -3486,51 +3452,6 @@ def lambda_handler(event, context):
     robots_meta_html = ROBOTS_NOINDEX_HTML if visibility in (VIS_PRIVATE, VIS_INTERESTED) else ''
     visibility_banner_html = render_visibility_banner(visibility) if _is_admin else ''
 
-    # Fetch news data for the company - using exact phrase matching with business context
-    business_context = "funding OR pre-IPO OR finance OR investment OR technology OR startup OR venture OR company OR business"
-    news_html = ""
-
-    # Skip the News section for companies whose search returns mostly junk (see NEWS_SKIP_COMPANIES)
-    news_data = None
-    if is_closed_public:
-        pass
-    elif company_name.strip().lower() in NEWS_SKIP_COMPANIES:
-        logger.info(f"News disabled for company: {company_name}")
-    else:
-        news_data = test_news_api(f'"{company_name}" AND ({business_context})')
-
-    # Process news data if available
-    if news_data and news_data.get('articles'):
-        articles = news_data.get('articles', [])[:5]  # Limit to 5 articles
-        
-        news_html = "<h2>Recent News</h2><ul>"
-        
-        for article in articles:
-            title = article.get('title', 'No Title')
-            source = article.get('source', {}).get('name', 'Unknown Source')
-            url = article.get('url', '#')
-            published_date = article.get('publishedAt', '')
-            
-            # Format date if available
-            formatted_date = published_date
-            if published_date:
-                try:
-                    date_obj = datetime.strptime(published_date, '%Y-%m-%dT%H:%M:%SZ')
-                    formatted_date = date_obj.strftime('%b %d, %Y')
-                except ValueError:
-                    formatted_date = published_date
-            
-            news_html += f"""
-            <li>
-                <a href="{url}" target="_blank">{title}</a>
-                <div style="font-size: 0.9em; color: #666;">
-                    {source} • {formatted_date}
-                </div>
-            </li>
-            """
-        
-        news_html += "</ul>"
-
     # Continue with the rest of your code
     company_custom_fields = company_data.get('custom_fields', {})
     
@@ -3838,8 +3759,8 @@ def lambda_handler(event, context):
         return logo_url
 
 
-    # Closed public pages keep the full historical terms; weekly signup and
-    # news are already '' for them.
+    # Closed public pages keep the full historical terms; weekly signup is
+    # already '' for them.
     deal_main_inner = f"""{generate_table_html(table_data)}
 
 {'' if dg_gated else f"""        <div id="spvSection" style="display: {'' if map_option_value('Structure', mapped_fields.get('Structure', [])) == 'Fund' else 'none'}">
@@ -3848,10 +3769,6 @@ def lambda_handler(event, context):
         <p style="font-size:13.5px;color:#555;margin:10px 0 0 2px;font-style:italic">* Fees shown are the seller&rsquo;s SPV terms only and do not include broker commission, which is quoted separately.</p>
         </div>
 """}{weekly_signup_html}
-        <!-- News Section -->
-        <div id="newsSection" class="news-section">
-            {news_html}
-        </div>
 """
 
     # Other live offers in the same company, for non-live stages.
