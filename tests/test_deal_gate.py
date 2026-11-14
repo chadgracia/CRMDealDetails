@@ -390,11 +390,11 @@ class LinksAndCookies(unittest.TestCase):
             tok = lf.dg_make_token(P_CLEARED)
         r = run(lf, qp={"v": tok, "utm": "a b"})
         self.assertEqual(r["statusCode"], 302)
-        self.assertEqual(r["headers"]["Location"], f"/deal/{DEAL_ID}?utm=a+b&deal_id={DEAL_ID}")
+        self.assertEqual(r["headers"]["Location"], f"https://trades.graciagroup.com/deal/{DEAL_ID}?utm=a+b")
         self.assertEqual(len(r["cookies"]), 1)
         c = r["cookies"][0]
         self.assertTrue(c.startswith("gg_view="))
-        for attr in ("Max-Age=31536000", "Path=/", "Secure", "HttpOnly", "SameSite=Lax"):
+        for attr in ("Max-Age=15811200", "Path=/", "Secure", "HttpOnly", "SameSite=Lax"):
             self.assertIn(attr, c)
         pid = lf.dg_verify_token(c.split(";")[0].split("=", 1)[1], "viewc1")
         with mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
@@ -716,6 +716,141 @@ class SelfConfirmBox(unittest.TestCase):
         body = page({"gg_id": gg_id("hal@x.com")})
         self.assertIn(TERM, body)
         self.assertNotIn("I confirm I am an accredited investor", body)
+
+
+# --- Public URL behind the Trades API Gateway proxy; six-month links; log redaction ---
+SITE = "https://trades.graciagroup.com"
+
+
+def gw_http_proxy_event(qs, cookies=None, headers=None):
+    """What CRMDealDetails receives for https://trades.graciagroup.com/deal/{id}: API Gateway
+    REST API "Trades" -> HTTP proxy -> Lambda Function URL (payload v2). The Lambda's own
+    path is "/" and the deal id arrives as ?deal_id=."""
+    q = "&".join(f"{k}={v}" for k, v in qs)
+    e = {"version": "2.0", "routeKey": "$default", "rawPath": "/", "rawQueryString": q,
+         "queryStringParameters": dict(qs),
+         "headers": dict({"host": "abcdefgh.lambda-url.us-east-1.on.aws",
+                          "x-forwarded-for": "203.0.113.7", "x-forwarded-proto": "https"}, **(headers or {})),
+         "requestContext": {"domainName": "abcdefgh.lambda-url.us-east-1.on.aws",
+                            "http": {"method": "GET", "path": "/", "protocol": "HTTP/1.1",
+                                     "sourceIp": "203.0.113.7"}},
+         "isBase64Encoded": False}
+    if cookies:
+        e["cookies"] = [f"{k}={v}" for k, v in cookies.items()]
+    return e
+
+
+def gw_lambda_proxy_event(deal_id, qp, headers=None):
+    """REST API Lambda proxy (payload v1) for /deal/{deal_id}."""
+    return {"resource": "/deal/{deal_id}", "path": f"/deal/{deal_id}", "httpMethod": "GET",
+            "headers": dict(headers or {}), "multiValueHeaders": {k: [v] for k, v in (headers or {}).items()},
+            "queryStringParameters": dict(qp) or None,
+            "multiValueQueryStringParameters": {k: [v] for k, v in qp.items()} or None,
+            "pathParameters": {"deal_id": deal_id}, "stageVariables": None,
+            "requestContext": {"resourcePath": "/deal/{deal_id}", "path": f"/prod/deal/{deal_id}",
+                               "httpMethod": "GET", "identity": {"sourceIp": "203.0.113.7"}},
+            "body": None, "isBase64Encoded": False}
+
+
+def handle(e, env=None):
+    with mock.patch.object(lf.urllib.request, "urlopen", fake_urlopen), \
+            mock.patch.dict(os.environ, env if env is not None else {"VIEW_LINK_SECRET": VIEW_SECRET}):
+        return lf.lambda_handler(e, None)
+
+
+class PublicUrlBehindProxy(unittest.TestCase):
+    def tok(self, pid=P_CLEARED):
+        with mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
+            return lf.dg_make_token(pid)
+
+    def test_v_link_lands_on_the_deal_page_not_home(self):
+        tok = self.tok()
+        for e, want in (
+                (gw_http_proxy_event([("deal_id", DEAL_ID), ("v", tok)]), f"{SITE}/deal/{DEAL_ID}"),
+                (gw_http_proxy_event([("deal_id", DEAL_ID), ("v", tok), ("utm", "a b"), ("gate_preview", "anon"),
+                                      ("admin_key", "zz")]), f"{SITE}/deal/{DEAL_ID}?utm=a+b"),
+                (dict(gw_http_proxy_event([("deal_id", DEAL_ID), ("v", tok)]), rawPath=f"/{DEAL_ID}"),
+                 f"{SITE}/deal/{DEAL_ID}"),
+                (gw_lambda_proxy_event(DEAL_ID, {"v": tok}), f"{SITE}/deal/{DEAL_ID}")):
+            reset(lf, switch=False)
+            r = handle(e)
+            self.assertEqual(r["statusCode"], 302)
+            self.assertEqual(r["headers"]["Location"], want)
+            c = r["cookies"][0] if "cookies" in r else r["multiValueHeaders"]["Set-Cookie"][0]
+            self.assertTrue(c.startswith("gg_view="))
+
+    def test_redirect_never_leaves_site(self):
+        tok = self.tok()
+        for bad in ("//evil.example", "..%2F..%2Fx", "https://evil.example/x", "4242\\\\evil"):
+            reset(lf, switch=False)
+            r = handle(gw_http_proxy_event([("deal_id", bad), ("v", tok)]))
+            self.assertTrue(r["headers"]["Location"].startswith(SITE + "/deal/"), r["headers"]["Location"])
+            self.assertNotIn("//evil", r["headers"]["Location"][len(SITE):])
+
+    def test_gate_box_uses_public_url(self):
+        reset(lf, switch=True)
+        body = handle(gw_http_proxy_event([("deal_id", DEAL_ID), ("utm", "q")]))["body"]
+        state = body.split("&amp;state=", 1)[1].split('"', 1)[0]
+        state = urllib.parse.unquote(state)
+        dest = base64.urlsafe_b64decode(state + "=" * (-len(state) % 4)).decode()
+        self.assertEqual(dest, f"{SITE}/deal/{DEAL_ID}?utm=q")
+        reset(lf, switch=True)
+        body = handle(gw_http_proxy_event([("deal_id", DEAL_ID)], cookies={"gg_id": gg_id("hal@x.com")}))["body"]
+        self.assertIn(f'name="path" value="/deal/{DEAL_ID}"', body)     # self-confirm returns here
+
+
+class SixMonths(unittest.TestCase):
+    def test_link_and_cookie_both_six_months(self):
+        self.assertEqual(lf.DG_LINK_TTL, 183 * 86400)
+        self.assertEqual(lf.DG_COOKIE_TTL, 183 * 86400)
+        self.assertEqual(lf.DG_COOKIE_MAX_AGE, 183 * 86400)
+        with mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
+            c = lf.dg_view_cookie(P_CLEARED, now=NOW)
+            self.assertIn("Max-Age=15811200;", c)
+            exp = int(c.split("=", 1)[1].split(";")[0].split(".")[1])
+            self.assertEqual(exp - NOW, 183 * 86400)
+            self.assertEqual(lf.dg_verify_token(c.split("=", 1)[1].split(";")[0], "viewc1", NOW + 182 * 86400), P_CLEARED)
+            self.assertIsNone(lf.dg_verify_token(c.split("=", 1)[1].split(";")[0], "viewc1", NOW + 184 * 86400))
+
+    def test_old_twelve_month_cookie_and_overlong_link_refused(self):
+        now = int(time.time())
+        reset(lf, switch=True)
+        with mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
+            e = event(None, {"gg_view": view_tok(P_CLEARED, "viewc1", now + 365 * 86400)})
+            self.assertEqual(lf.dg_decide(e, {}, False)[:2], (True, "anon"))
+            e = event(None, {"gg_view": view_tok(P_CLEARED, "viewc1", now + 183 * 86400)})
+            self.assertEqual(lf.dg_decide(e, {}, False)[:2], (False, "cleared"))
+            self.assertIsNone(lf.dg_verify_token(view_tok(P_CLEARED, "view1", now + 200 * 86400)))
+            self.assertEqual(lf.dg_verify_token(view_tok(P_CLEARED, "view1", now + 183 * 86400)), P_CLEARED)
+
+
+class RefererRedaction(unittest.TestCase):
+    SECRETS = ("SECRETADMIN", "QQTOK1", "QQSSO1", "QQTKN1", "QQCODE1", "QQSTATE1", "QQKEY1", "QQGP1")
+
+    def referer(self):
+        return ("https://trades.graciagroup.com/deal/9?admin_key=SECRETADMIN&company=Acme&v=QQTOK1&sso=QQSSO1"
+                "&token=QQTKN1&code=QQCODE1&state=QQSTATE1&key=QQKEY1&gp=QQGP1&gate_preview=anon#frag")
+
+    def test_redact_url(self):
+        out = lf.dg_redact_url(self.referer())
+        for s in self.SECRETS:
+            self.assertNotIn(s, out)
+        self.assertTrue(out.startswith("https://trades.graciagroup.com/deal/9?admin_key=%5Bredacted%5D&company=Acme"))
+        self.assertTrue(out.endswith("#frag"))
+        self.assertEqual(lf.dg_redact_url("https://trades.graciagroup.com"), "https://trades.graciagroup.com")
+        self.assertEqual(lf.dg_redact_url("Mozilla/5.0"), "Mozilla/5.0")
+        self.assertEqual(lf.dg_redact_url("/x?ADMIN_KEY=a"), "/x?ADMIN_KEY=%5Bredacted%5D")
+
+    def test_request_log_has_no_secrets_from_referer(self):
+        for e in (gw_http_proxy_event([("deal_id", DEAL_ID)], headers={"referer": self.referer()}),
+                  gw_lambda_proxy_event(DEAL_ID, {}, headers={"Referer": self.referer()})):
+            reset(lf, switch=False)
+            with self.assertLogs(level="INFO") as logs:
+                handle(e)
+            joined = "\n".join(logs.output)
+            self.assertIn("company=Acme", joined)
+            for s in self.SECRETS:
+                self.assertNotIn(s, joined)
 
 
 if __name__ == "__main__":
