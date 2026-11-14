@@ -1818,8 +1818,9 @@ def _cf_option_ids(value):
     return out
 
 
-def _dg_person_slim(p, cf):
-    """(investor level ids, first name, full name, company, emails) for the deal gate."""
+def _dg_person_slim(p, cf, source_rule=None):
+    """(investor level ids, first name, full name, company, emails, hard_blocked)
+    for the deal gate."""
     first = (p.get("first_name") or "").strip() if isinstance(p.get("first_name"), str) else ""
     name = p.get("full_name") or p.get("name") or ""
     name = name.strip() if isinstance(name, str) else ""
@@ -1831,24 +1832,27 @@ def _dg_person_slim(p, cf):
     co = p.get("company") if isinstance(p.get("company"), dict) else {}
     company = co.get("name") or p.get("company_name") or ""
     company = company.strip() if isinstance(company, str) else ""
+    emails = tuple(sorted(_person_emails(p)))
     return (frozenset(_cf_option_ids(cf.get(INVESTOR_LEVEL_FIELD))), first, name, company,
-            tuple(sorted(_person_emails(p))))
+            emails, dg_person_hard_blocked(emails, cf, source_rule))
 
 
 def _people_slim_status_index():
     """{person id str: (kyc_ok, accreditation_ok)} from people-slim.json, or
     None on any S3/parse failure. The same pass also fills
-    _people_slim_cache["dg_by_id"] (Investor Level, names, company, emails) for
-    the deal gate. Never reads people.json."""
+    _people_slim_cache["dg_by_id"] (Investor Level, names, company, emails, hard
+    block) for the deal gate. Never reads people.json."""
     now = time.time()
     cache = _people_slim_cache
     if cache["by_id"] is not None and now - cache["checked_at"] < PEOPLE_SLIM_TTL_SECONDS:
         return cache["by_id"]
     try:
         s3 = boto3.client('s3')
+        source_rule = dg_source_rule(s3)
         head = s3.head_object(Bucket=PEOPLE_SLIM_BUCKET, Key=PEOPLE_SLIM_KEY)
         etag = head.get("ETag")
-        if cache["by_id"] is not None and etag and etag == cache["etag"]:
+        if (cache["by_id"] is not None and etag and etag == cache["etag"]
+                and source_rule == cache.get("dg_source_rule")):
             cache["checked_at"] = now
             return cache["by_id"]
         obj = s3.get_object(Bucket=PEOPLE_SLIM_BUCKET, Key=PEOPLE_SLIM_KEY)
@@ -1856,17 +1860,25 @@ def _people_slim_status_index():
         by_id = {}
         by_email = {}
         dg_by_id = {}
+        field_counts = {"transactor": 0, "source": 0}
         for p in (data.get("people") or []) if isinstance(data, dict) else []:
             if not isinstance(p, dict) or p.get("id") is None:
                 continue
             cf = p.get("custom_fields") or {}
             by_id[str(p["id"])] = (bool(_cf_option_ids(cf.get(KYC_FIELD)) & KYC_OK_IDS),
                                    bool(_cf_option_ids(cf.get(ACCREDITATION_FIELD)) & ACCREDITATION_OK_IDS))
-            dg_by_id[str(p["id"])] = _dg_person_slim(p, cf)
+            if not isinstance(cf, dict):
+                cf = {}
+            dg_by_id[str(p["id"])] = _dg_person_slim(p, cf, source_rule)
+            if cf.get(DG_TRANSACTOR_FIELD) not in (None, "", []):
+                field_counts["transactor"] += 1
+            if source_rule and cf.get(source_rule["field_key"]) not in (None, "", []):
+                field_counts["source"] += 1
             for em in _person_emails(p):
                 by_email.setdefault(em, set()).add(str(p["id"]))
         cache.update({"etag": etag or obj.get("ETag"), "checked_at": now, "by_id": by_id,
                       "by_email": by_email, "dg_by_id": dg_by_id,
+                      "dg_source_rule": source_rule, "dg_field_counts": field_counts,
                       "last_modified": head.get("LastModified") or obj.get("LastModified")})
         return by_id
     except Exception as e:
@@ -2089,9 +2101,93 @@ def dg_level_label(level_ids):
     return " / ".join(DG_IL_LABELS.get(i, f"Other ({i})") for i in ids)
 
 
+# Hard block: Rainmaker staff, brokers and Rainmaker-sourced contacts never see
+# offer terms, whatever their Investor Level. It beats cleared and personal links.
+DG_HARD_DOMAINS = ("rainmakersecurities.com", "rainmakerapac.com")   # and subdomains
+# Same list as chadgracia/daily-brief MAILER_BLOCK_EMAILS.
+DG_HARD_EMAILS = frozenset({
+    "cvq@sternventures.com", "christian@belucaventures.com", "ch@acceleratesportsbusiness.com",
+    "daniel@kellscapital.com", "gselz@outsetpartners.com", "gcapello@premieralts.com",
+    "isubel@marulacap.com", "jack@hamiagroup.com", "js@acceleratesportsbusiness.com",
+    "kgilboy@outsetpartners.com", "lh@lab-137.com", "mcaccavo@bomboraadvisory.com",
+    "marko@catalytic-life.com", "beards@internetsec.com", "michael@ballardcap.com",
+    "pstriebel@outsetpartners.com", "sean@alphalavin.com", "staylor@spry.vc",
+    "tbarnes@axisgroupventures.com", "tom@impacts.capital", "wplatt@marulacap.com",
+    "yoram@pacificoakscapital.com",
+})
+DG_TRANSACTOR_FIELD = "custom_label_3759163"   # Person: Transactor Type
+# Co-Broker, Foreign Finder, Intermediary - Other
+DG_HARD_TRANSACTOR_IDS = frozenset({"6577160", "6888332", "6888333"})
+# Person field labelled "Source", option "RMS". Ids are resolved live by the trades
+# admin page (?view=deal-gate) and saved here; missing/unreadable = Source rule off.
+DG_SOURCE_LABEL = "Source"
+DG_SOURCE_RMS = "RMS"
+DG_SOURCE_KEY = "deal-gate/source-field.json"
+_DG_FIELD_KEY_RE = re.compile(r"^custom_label_\d{1,12}$")
+
+
+def dg_email_hard_blocked(email):
+    """True for a Rainmaker address (or subdomain) or a listed broker address."""
+    if not isinstance(email, str):
+        return False
+    e = email.strip().lower()
+    if e.count("@") != 1:
+        return False
+    if e in DG_HARD_EMAILS:
+        return True
+    domain = e.split("@", 1)[1]
+    return bool(domain) and any(domain == d or domain.endswith("." + d) for d in DG_HARD_DOMAINS)
+
+
+def dg_source_rule(s3=None):
+    """{"field_key", "rms_ids"} from s3://full-pipeline-cache/deal-gate/source-field.json,
+    or None (Source rule off). Never raises."""
+    try:
+        s3 = s3 or boto3.client('s3')
+        data = json.loads(s3.get_object(Bucket=DG_BUCKET, Key=DG_SOURCE_KEY)["Body"].read())
+        key = data.get("field_key") if isinstance(data, dict) else None
+        if not isinstance(key, str) or not _DG_FIELD_KEY_RE.match(key):
+            return None
+        ids = frozenset(str(i) for i in (data.get("rms_ids") or []) if str(i).isdigit())
+        return {"field_key": key, "rms_ids": ids}
+    except Exception as e:
+        logger.info(f"deal-gate: Source rule off ({type(e).__name__})")
+        return None
+
+
+def dg_person_hard_blocked(emails, cf, source_rule=None):
+    """Hard block for one person record: Rainmaker/listed email, broker Transactor
+    Type, or Source = RMS."""
+    if any(dg_email_hard_blocked(e) for e in (emails or ())):
+        return True
+    cf = cf if isinstance(cf, dict) else {}
+    if _cf_option_ids(cf.get(DG_TRANSACTOR_FIELD)) & DG_HARD_TRANSACTOR_IDS:
+        return True
+    if source_rule and source_rule.get("field_key"):
+        vals = _cf_option_ids(cf.get(source_rule["field_key"]))
+        if vals & set(source_rule.get("rms_ids") or ()):
+            return True
+        if any(v.strip().lower() == DG_SOURCE_RMS.lower() for v in vals):
+            return True
+    return False
+
+
+def dg_record_state(rec):
+    """Raw state of one dg_by_id record: 'hard' when hard-blocked, else its level
+    state; 'pending' for no record."""
+    if not rec:
+        return "pending"
+    if len(rec) > 5 and rec[5]:
+        return "hard"
+    return dg_level_state(rec[0])
+
+
 def dg_combine(states):
-    """Several matched people: cleared if any, else blocked if any, else pending."""
+    """Several matched people: blocked if any is hard-blocked, else cleared if any,
+    else blocked if any, else pending."""
     states = list(states)
+    if "hard" in states:
+        return "blocked"
     if "cleared" in states:
         return "cleared"
     if "blocked" in states:
@@ -2099,14 +2195,22 @@ def dg_combine(states):
     return "pending"
 
 
-def dg_state_for_email(email, people):
+def _dg_email_raw(email, people):
+    """{pid: raw state} for an address ({None: 'hard'} for a hard-blocked address)."""
+    if dg_email_hard_blocked(email):
+        return {None: "hard"}
     by_email, dg_by_id, _ = people
     pids = by_email.get((email or "").strip().lower()) or ()
-    if not pids:
+    return {pid: dg_record_state(dg_by_id.get(pid)) for pid in pids}
+
+
+def dg_state_for_email(email, people):
+    states = _dg_email_raw(email, people)
+    if not states:
         return "pending", None
-    states = {pid: dg_level_state((dg_by_id.get(pid) or ((),))[0]) for pid in pids}
     st = dg_combine(states.values())
-    pick = sorted(p for p, s in states.items() if s == st)
+    want = ("hard", "blocked") if st == "blocked" else (st,)
+    pick = sorted(p for p, s in states.items() if p is not None and s in want)
     return st, (pick[0] if pick else None)
 
 
@@ -2117,16 +2221,17 @@ def dg_viewer_state(event, view_pid=None):
     view_pid = view_pid or dg_view_pid(event)
     if not email and not view_pid:
         return "anon"
+    if email and dg_email_hard_blocked(email):
+        return "blocked"
     people = dg_people()
     if people is None:
         logger.warning("deal-gate: people index unreadable; identified viewer treated as cleared")
         return "cleared"
     states = []
     if email:
-        states.append(dg_state_for_email(email, people)[0])
+        states += list(_dg_email_raw(email, people).values()) or ["pending"]
     if view_pid:
-        rec = people[1].get(str(view_pid))
-        states.append(dg_level_state(rec[0]) if rec else "pending")
+        states.append(dg_record_state(people[1].get(str(view_pid))))
     return dg_combine(states)
 
 
@@ -2248,6 +2353,9 @@ DG_ADMIN_BOX = """<div class="gg-copylink" style="margin:12px 0;padding:10px 14p
         if(!j||!j.matches){res.textContent=(j&&j.error)||'Not available';return;}
         if(!j.matches.length){res.textContent='No matches';return;}
         res.innerHTML=j.matches.map(function(m){
+          if(m.hard){return '<div style="padding:4px 0;border-bottom:1px solid #eee;color:#777">'+
+            esc(m.name)+' &middot; '+esc(m.company)+' &middot; '+esc(m.email)+
+            ' &middot; <span style="color:#b91c1c">Blocked: Rainmaker/broker</span></div>';}
           var warn=m.state==='cleared'?'':' <span style="color:#b45309">('+esc(m.state)+': this link will not unlock terms)</span>';
           return '<div class="ggc-row" data-pid="'+esc(m.pid)+'" style="padding:4px 0;cursor:pointer;border-bottom:1px solid #eee">'+
             esc(m.name)+' &middot; '+esc(m.company)+' &middot; '+esc(m.email)+' &middot; '+esc(m.state)+warn+
