@@ -1890,7 +1890,8 @@ DG_COOKIE_MAX_AGE = DG_COOKIE_TTL
 DG_TOKEN_SKEW = 300             # clock slack when capping a token's remaining life
 DG_STATES = ("anon", "pending", "blocked", "cleared")
 # Admin-only extra previews: the confirm button, and the thank-you shown after it.
-DG_PREVIEW_EXTRA = {"confirm": "pending", "confirmed": "pending"}
+DG_PREVIEW_EXTRA = {"confirm": "pending", "confirmed": "pending",
+                    "details-yes": "pending", "details-unsure": "pending"}
 DG_IL_LABELS = {"6950561": "Unknown", "7161646": "Hold: Screen for Substantive",
                 "6950562": "Non-Accredited", "7162165": "Substantive",
                 "7223459": "Self-Confirmed Accredited",
@@ -1918,6 +1919,47 @@ DG_QUEUE_KEY = "deal-gate/queue.json"
 DG_APPROVED_KEY = "deal-gate/approved.json"
 DG_APPROVED_WINDOW = 3 * 3600    # an approval counts until the people-slim rebuild catches up
 DG_APPROVED_TTL = 60
+DG_QUEUE_TTL = 60
+# "One more step" details form for signed-in pending viewers (no CRM record, or a
+# blank / Unknown / Hold record). Submitting never clears the gate.
+DG_AD_ROUTE = "/?view=access-details"
+DG_AD_COOKIE = "gg_ad"           # "already submitted" marker (answer only), bridges the queue cache
+DG_AD_COOKIE_TTL = 7 * 86400
+DG_AD_MAX = 80
+DG_AD_ANSWERS = ("yes", "unsure")
+DG_AD_PLACEHOLDER_NAMES = frozenset({"", ".", "..", "...", "-", "--", "_", "?", "x", "n/a", "na", "none",
+                                     "null", "unknown", "(unknown)", "unverified", "(unverified)", "tbd",
+                                     "first", "last", "name", "first name", "last name"})
+DG_COUNTRIES = (
+    "United States", "Afghanistan", "Albania", "Algeria", "Andorra", "Angola", "Antigua and Barbuda",
+    "Argentina", "Armenia", "Australia", "Austria", "Azerbaijan", "Bahamas", "Bahrain", "Bangladesh",
+    "Barbados", "Belarus", "Belgium", "Belize", "Benin", "Bermuda", "Bhutan", "Bolivia",
+    "Bosnia and Herzegovina", "Botswana", "Brazil", "British Virgin Islands", "Brunei", "Bulgaria",
+    "Burkina Faso", "Burundi", "Cambodia", "Cameroon", "Canada", "Cape Verde", "Cayman Islands",
+    "Central African Republic", "Chad", "Chile", "China", "Colombia", "Comoros", "Congo",
+    "Costa Rica", "Croatia", "Cuba", "Curacao", "Cyprus", "Czech Republic", "Democratic Republic of the Congo",
+    "Denmark", "Djibouti", "Dominica", "Dominican Republic", "Ecuador", "Egypt", "El Salvador",
+    "Equatorial Guinea", "Eritrea", "Estonia", "Eswatini", "Ethiopia", "Fiji", "Finland", "France",
+    "Gabon", "Gambia", "Georgia", "Germany", "Ghana", "Gibraltar", "Greece", "Grenada", "Guatemala",
+    "Guernsey", "Guinea", "Guinea-Bissau", "Guyana", "Haiti", "Honduras", "Hong Kong", "Hungary",
+    "Iceland", "India", "Indonesia", "Iran", "Iraq", "Ireland", "Isle of Man", "Israel", "Italy",
+    "Ivory Coast", "Jamaica", "Japan", "Jersey", "Jordan", "Kazakhstan", "Kenya", "Kiribati", "Kosovo",
+    "Kuwait", "Kyrgyzstan", "Laos", "Latvia", "Lebanon", "Lesotho", "Liberia", "Libya", "Liechtenstein",
+    "Lithuania", "Luxembourg", "Macau", "Madagascar", "Malawi", "Malaysia", "Maldives", "Mali", "Malta",
+    "Marshall Islands", "Mauritania", "Mauritius", "Mexico", "Micronesia", "Moldova", "Monaco",
+    "Mongolia", "Montenegro", "Morocco", "Mozambique", "Myanmar", "Namibia", "Nauru", "Nepal",
+    "Netherlands", "New Zealand", "Nicaragua", "Niger", "Nigeria", "North Korea", "North Macedonia",
+    "Norway", "Oman", "Pakistan", "Palau", "Palestine", "Panama", "Papua New Guinea", "Paraguay", "Peru",
+    "Philippines", "Poland", "Portugal", "Puerto Rico", "Qatar", "Romania", "Russia", "Rwanda",
+    "Saint Kitts and Nevis", "Saint Lucia", "Saint Vincent and the Grenadines", "Samoa", "San Marino",
+    "Sao Tome and Principe", "Saudi Arabia", "Senegal", "Serbia", "Seychelles", "Sierra Leone",
+    "Singapore", "Slovakia", "Slovenia", "Solomon Islands", "Somalia", "South Africa", "South Korea",
+    "South Sudan", "Spain", "Sri Lanka", "Sudan", "Suriname", "Sweden", "Switzerland", "Syria", "Taiwan",
+    "Tajikistan", "Tanzania", "Thailand", "Timor-Leste", "Togo", "Tonga", "Trinidad and Tobago",
+    "Tunisia", "Turkey", "Turkmenistan", "Turks and Caicos Islands", "Tuvalu", "Uganda", "Ukraine",
+    "United Arab Emirates", "United Kingdom", "Uruguay", "Uzbekistan", "Vanuatu", "Vatican City",
+    "Venezuela", "Vietnam", "Yemen", "Zambia", "Zimbabwe", "Other")
+_DG_CTRL_RE = re.compile("[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u2064\ufeff]")
 DG_SC_COOKIE_TTL = 12 * 3600
 DG_SC_FORM_TTL = 2 * 3600
 DG_IQF_URL = "https://www.rainmakersecurities.com/investor-qualification-form-for-natural-persons"
@@ -1934,6 +1976,7 @@ _DG_TOKEN_RE = re.compile(r"^([A-Za-z0-9_-]{1,64})\.(\d{1,12})\.([0-9a-f]{32})$"
 _dg_switch_cache = {"enabled": None, "checked_at": 0.0}
 _dg_approved_cache = {"ids": {}, "checked_at": 0.0}
 _dg_queue_seen = set()           # emails this container already found queued/declined
+_dg_queue_cache = {"data": None, "checked_at": 0.0}
 
 
 def _dg_secret():
@@ -1990,7 +2033,8 @@ def dg_verify_token(token, prefix="view1", now=None):
     if int(exp) <= now_i:
         return None
     max_ttl = {"view1": DG_LINK_TTL, "viewc1": DG_COOKIE_TTL,
-               "sc1": DG_SC_COOKIE_TTL, "scf1": DG_SC_FORM_TTL}.get(prefix)
+               "sc1": DG_SC_COOKIE_TTL, "scf1": DG_SC_FORM_TTL,
+               "adf1": DG_SC_FORM_TTL, "ad1": DG_AD_COOKIE_TTL}.get(prefix)
     if max_ttl and int(exp) - now_i > max_ttl + DG_TOKEN_SKEW:
         return None    # claims a longer life than the policy (e.g. an old 12-month cookie)
     if not hmac.compare_digest(_dg_sig(prefix, pid, exp, secret), sig):
@@ -2302,25 +2346,80 @@ def dg_viewer_state(event, view_pid=None):
     return dg_viewer_detail(event, view_pid)[0]
 
 
+def dg_email_tag(email):
+    """Short one-way tag for an address (binds form tokens and cookies to it)."""
+    return hashlib.sha256((email or "").strip().lower().encode()).hexdigest()[:32]
+
+
+def dg_clean_field(value, cap=DG_AD_MAX):
+    """A submitted text field: control / invisible characters removed, whitespace
+    collapsed, trimmed, capped at `cap` characters."""
+    if not isinstance(value, str):
+        return ""
+    v = " ".join(_DG_CTRL_RE.sub("", re.sub("[\t\n\r\v\f]", " ", value)).split())
+    return v[:cap].strip()
+
+
+def dg_name_is_placeholder(name):
+    """True for a blank or placeholder name (".", "Unknown", "(unverified)", ...)."""
+    return dg_clean_field(name if isinstance(name, str) else "").lower() in DG_AD_PLACEHOLDER_NAMES
+
+
+def dg_ad_cookie(email, answer, now=None):
+    """Set-Cookie value for gg_ad (which answer this address gave), or None."""
+    tok = dg_make_token(("y" if answer == "yes" else "u") + dg_email_tag(email), "ad1", DG_AD_COOKIE_TTL, now)
+    if not tok:
+        return None
+    return (f"{DG_AD_COOKIE}={tok}; Max-Age={DG_AD_COOKIE_TTL}; Path=/; "
+            "Secure; HttpOnly; SameSite=Lax")
+
+
+def dg_details_done(event, email):
+    """(answer, first name) when this signed-in address has already sent the
+    details form (queue item, else the gg_ad cookie with no name), else None."""
+    item = dg_queue_item(email)
+    if item and item.get("details_at") and item.get("accredited") in DG_AD_ANSWERS:
+        return item["accredited"], str(item.get("first_name") or "")
+    v = dg_verify_token(_get_cookie(event, DG_AD_COOKIE), "ad1")
+    if v and len(v) == 33 and v[1:] == dg_email_tag(email) and v[0] in "yu":
+        return ("yes" if v[0] == "y" else "unsure"), ""
+    return None
+
+
 def dg_self_confirm_token(event, view_pid=None, now=None):
-    """For a pending viewer: DG_SC_THANKS when they have already self-confirmed,
-    else a signed form token for the self-confirm button when they match a
-    blank / Unknown / Hold record, else None (links disabled, unmatched, other)."""
+    """What a pending viewer sees in the gate box:
+    ('done', answer, first) after sending the details form; DG_SC_THANKS when a
+    matched record is Self-Confirmed (or gg_sc); ('details', form token) for a
+    signed-in viewer with no CRM record or a blank / Unknown / Hold record;
+    else None (the neutral box)."""
     state, confirm, thanked = dg_viewer_detail(event, view_pid)
     if state != "pending":
         return None
+    email = _read_identity_email(event)
+    if email:
+        done = dg_details_done(event, email)
+        if done:
+            return ("done",) + done
     if thanked:
         return DG_SC_THANKS
-    if not confirm or not _dg_secret():
+    if not email or not _dg_secret():
         return None
-    return dg_make_token(confirm[0], "scf1", DG_SC_FORM_TTL, now)
+    people = dg_people()
+    unmatched = people is not None and not people[0].get(email.strip().lower())
+    if not confirm and not unmatched:
+        return None
+    tok = dg_make_token(dg_email_tag(email), "adf1", DG_SC_FORM_TTL, now)
+    return ("details", tok) if tok else None
 
 
 def dg_box_token(event, preview, qp, view_pid=None):
     """What the gate box shows below a pending state: an admin preview of the
-    button ('confirm') or the thank-you ('confirmed'), else dg_self_confirm_token."""
+    details form ('confirm'), the Self-Confirmed thank-you ('confirmed') or the
+    form thank-yous ('details-yes' / 'details-unsure'), else dg_self_confirm_token."""
     if preview:
-        return {"confirm": "preview", "confirmed": DG_SC_THANKS}.get((qp or {}).get("gate_preview"))
+        return {"confirm": ("details", ""), "confirmed": DG_SC_THANKS,
+                "details-yes": ("done", "yes", ""),
+                "details-unsure": ("done", "unsure", "")}.get((qp or {}).get("gate_preview"))
     return dg_self_confirm_token(event, view_pid)
 
 
@@ -2387,6 +2486,14 @@ DG_CSS = """<style>
 .gate-form button{padding:8px 16px;font-size:14px;font-weight:600;border:none;border-radius:5px;
   background:var(--accent,#3a5a75);color:#fff;cursor:pointer}
 .gate-hp{position:absolute!important;left:-9999px!important;width:1px;height:1px;overflow:hidden}
+.gate-details{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;margin:10px 0;max-width:520px}
+.gate-details label{display:flex;flex-direction:column;font-size:13px;gap:3px}
+.gate-details input[type=text],.gate-details select{padding:7px 9px;font-size:14px;border:1px solid #ccc;border-radius:5px}
+.gate-details fieldset{grid-column:1/-1;border:none;margin:0;padding:0;font-size:14px}
+.gate-details fieldset label{flex-direction:row;align-items:center;gap:6px;font-size:14px}
+.gate-details button{grid-column:1/-1;justify-self:start;padding:8px 16px;font-size:14px;font-weight:600;
+  border:none;border-radius:5px;background:var(--accent,#3a5a75);color:#fff;cursor:pointer}
+@media (max-width:520px){.gate-details{grid-template-columns:1fr}}
 .gate-btn{display:inline-block;padding:8px 16px;font-size:14px;font-weight:600;border:none;border-radius:5px;
   background:var(--accent,#3a5a75);color:#fff!important;text-decoration:none;cursor:pointer}
 </style>"""
@@ -2415,13 +2522,45 @@ def dg_gate_box(state, dest_url, confirm_token=None):
     confirm_token (pending viewers only): a token shows the self-confirm button
     ('preview' renders it for an admin preview without a token); DG_SC_THANKS shows
     the thank-you for a viewer who has self-confirmed."""
+    esc = html_mod.escape
+    if state == "pending" and isinstance(confirm_token, tuple) and confirm_token[:1] == ("done",):
+        answer, first = confirm_token[1], confirm_token[2]
+        hi = f"Thanks, {esc(first)}." if first else "Thanks."
+        iqf = esc(DG_IQF_URL, quote=True)
+        if answer == "yes":
+            return (DG_CSS + '<div class="gate-box">'
+                    f"<p>{hi} We'll review your details and be in touch shortly.</p>"
+                    f'<p><a href="{iqf}" target="_blank" rel="noopener">Completing the Investor '
+                    'Qualification Form speeds this up</a></p></div>')
+        return (DG_CSS + '<div class="gate-box">'
+                f"<p>{hi} Please complete the Investor Qualification Form so we can review your access.</p>"
+                f'<p><a class="gate-btn" href="{iqf}" target="_blank" rel="noopener">Complete the '
+                'Investor Qualification Form</a></p></div>')
+    if state == "pending" and isinstance(confirm_token, tuple) and confirm_token[:1] == ("details",):
+        rel = dest_url[len(DG_SITE):] if dest_url.startswith(DG_SITE) else "/"
+        rel = dg_clean_path(rel or "/", "/")
+        opts = "".join(f'<option value="{esc(c, quote=True)}">{esc(c)}</option>' for c in DG_COUNTRIES)
+        return (DG_CSS + '<div class="gate-box">'
+                '<h2>One more step to see offer terms</h2>'
+                "<p>Tell us who you are and we'll review your access.</p>"
+                f'<form class="gate-details" method="post" action="{esc(DG_SITE + DG_AD_ROUTE, quote=True)}">'
+                f'<input type="hidden" name="t" value="{esc(confirm_token[1] or "", quote=True)}">'
+                f'<input type="hidden" name="path" value="{esc(rel, quote=True)}">'
+                '<input type="text" name="website" class="gate-hp" tabindex="-1" autocomplete="off" aria-hidden="true">'
+                f'<label>First name<input type="text" name="first_name" required maxlength="{DG_AD_MAX}" autocomplete="given-name"></label>'
+                f'<label>Last name<input type="text" name="last_name" required maxlength="{DG_AD_MAX}" autocomplete="family-name"></label>'
+                f'<label>Country<select name="country" required><option value="">Select</option>{opts}</select></label>'
+                f'<label>Employer (optional)<input type="text" name="employer" maxlength="{DG_AD_MAX}" autocomplete="organization"></label>'
+                '<fieldset><label><input type="radio" name="accredited" value="yes" required> I am an accredited investor</label>'
+                "<label><input type=\"radio\" name=\"accredited\" value=\"unsure\"> I'm not sure</label></fieldset>"
+                '<button type="submit">Submit</button>'
+                '</form></div>')
     if state == "pending" and confirm_token == DG_SC_THANKS:
         return DG_CSS + f'<div class="gate-box"><p>{html_mod.escape(DG_SC_THANKS_TEXT)}</p></div>'
     if state == "pending" and confirm_token:
         rel = dest_url[len(DG_SITE):] if dest_url.startswith(DG_SITE) else "/"
         rel = dg_clean_path(rel or "/", "/")
         tok = "" if confirm_token == "preview" else confirm_token
-        esc = html_mod.escape
         return (DG_CSS + '<div class="gate-box">'
                 '<p>Offer terms are shown to accredited investors.</p>'
                 f'<form class="gate-form" method="post" action="{esc(DG_SITE + DG_SC_ROUTE, quote=True)}">'
@@ -2544,11 +2683,87 @@ def dg_queue_add(email, pid, reason, s3=None, now=None):
         s3.put_object(Bucket=DG_BUCKET, Key=DG_QUEUE_KEY, ContentType="application/json",
                       Body=json.dumps({"items": items, "declined": declined}).encode())
         _dg_queue_seen.add(email)
+        _dg_queue_cache.update({"data": {"items": items, "declined": declined}, "checked_at": now})
         logger.info(f"deal-gate: access queue updated ({reason})")
         return True
     except Exception as e:
         logger.warning(f"deal-gate: access queue write failed ({type(e).__name__})")
         return False
+
+
+def dg_queue_read(s3=None, now=None):
+    """The access queue ({"items", "declined"}), cached DG_QUEUE_TTL seconds;
+    missing = empty, unreadable = None (one log line). Never raises."""
+    now = time.time() if now is None else now
+    c = _dg_queue_cache
+    if c["checked_at"] and now - c["checked_at"] < DG_QUEUE_TTL:
+        return c["data"]
+    c["checked_at"] = now
+    try:
+        s3 = s3 or boto3.client('s3')
+        try:
+            data = json.loads(s3.get_object(Bucket=DG_BUCKET, Key=DG_QUEUE_KEY)["Body"].read())
+        except Exception as e:
+            if "NoSuchKey" not in type(e).__name__ and "NoSuchKey" not in str(e):
+                raise
+            data = {}
+        data = data if isinstance(data, dict) else {}
+        c["data"] = {"items": data.get("items") if isinstance(data.get("items"), dict) else {},
+                     "declined": data.get("declined") if isinstance(data.get("declined"), dict) else {}}
+    except Exception as e:
+        logger.info(f"deal-gate: access queue unreadable ({type(e).__name__})")
+        c["data"] = None
+    return c["data"]
+
+
+def dg_queue_item(email, s3=None, now=None):
+    """This address's queue item (dict) or None."""
+    q = dg_queue_read(s3, now)
+    item = (q or {}).get("items", {}).get((email or "").strip().lower()) if q else None
+    return item if isinstance(item, dict) else None
+
+
+def dg_queue_details(email, pid, details, reason="signup", s3=None, now=None):
+    """Save details-form answers on this address's queue item (read-modify-write).
+    Adds the item when missing, unless the address is declined. Returns 'saved',
+    'declined' or 'failed' (one log line, never the address). Never raises."""
+    email = (email or "").strip().lower()
+    if not email:
+        return "failed"
+    now = time.time() if now is None else now
+    iso = datetime.fromtimestamp(now, timezone.utc).isoformat(timespec="seconds")
+    try:
+        s3 = s3 or boto3.client('s3')
+        try:
+            data = json.loads(s3.get_object(Bucket=DG_BUCKET, Key=DG_QUEUE_KEY)["Body"].read())
+        except Exception as e:
+            if "NoSuchKey" not in type(e).__name__ and "NoSuchKey" not in str(e):
+                raise
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        items = data.get("items") if isinstance(data.get("items"), dict) else {}
+        declined = data.get("declined") if isinstance(data.get("declined"), dict) else {}
+        prev = items.get(email) if isinstance(items.get(email), dict) else None
+        if prev is None and email in declined:
+            logger.info("deal-gate: details not queued (declined)")
+            return "declined"
+        prev = prev or {}
+        item = dict(prev)
+        item.update({k: v for k, v in (details or {}).items()})
+        item.update({"email": email, "person_id": (str(pid) if pid else prev.get("person_id")),
+                     "reason": prev.get("reason") if (prev.get("reason") and reason == "signup") else reason,
+                     "first_at": prev.get("first_at") or iso, "last_at": iso})
+        items[email] = item
+        s3.put_object(Bucket=DG_BUCKET, Key=DG_QUEUE_KEY, ContentType="application/json",
+                      Body=json.dumps({"items": items, "declined": declined}).encode())
+        _dg_queue_seen.add(email)
+        _dg_queue_cache.update({"data": {"items": items, "declined": declined}, "checked_at": now})
+        logger.info("deal-gate: access details saved")
+        return "saved"
+    except Exception as e:
+        logger.warning(f"deal-gate: access details write failed ({type(e).__name__})")
+        return "failed"
 
 
 def dg_queue_signup(event, s3=None, now=None):

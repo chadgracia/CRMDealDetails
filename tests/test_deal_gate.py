@@ -162,6 +162,7 @@ def reset(mod, switch=None, slim=True):
         mod._dg_switch_cache.update({"enabled": None, "checked_at": 0.0})
         mod._dg_approved_cache.update({"ids": {}, "checked_at": 0.0})
         mod._dg_queue_seen.clear()
+        mod._dg_queue_cache.update({"data": None, "checked_at": 0.0})
     mod._people_slim_cache.update({"etag": None, "checked_at": 0.0, "by_id": None, "by_email": None,
                                    "dg_by_id": None, "last_modified": None})
     for c in ("_pd_secret_cache",):
@@ -333,8 +334,9 @@ class Withheld(unittest.TestCase):
         b = self.body_for({"gg_id": gg_id("ned@x.com")})["body"]
         self.assertIn("Thanks for registering. Your access is being reviewed and we'll be in touch.", b)
         self.assertNotIn("Send link", b)
-        b = self.body_for({"gg_id": gg_id("hal@x.com")})["body"]      # Hold: self-confirm instead
-        self.assertIn("I confirm I am an accredited investor", b)
+        b = self.body_for({"gg_id": gg_id("hal@x.com")})["body"]      # Hold: details form instead
+        self.assertIn("<h2>One more step to see offer terms</h2>", b)
+        self.assertIn("Tell us who you are and we'll review your access.", b)
         self.assertNotIn("Send link", b)
         for word in ("CRM", "Investor Level", "tracking", "Pipeline"):
             self.assertNotIn(word, b.split("gate-box", 1)[1].split("</div>", 1)[0])
@@ -647,35 +649,47 @@ def form_token(body):
 
 
 class SelfConfirmBox(unittest.TestCase):
-    def test_hold_viewer_gets_button_not_terms(self):
-        exp = int(time.time()) + 3600
-        for cookies, pid in (({"gg_id": gg_id("hal@x.com")}, "102"), ({"gg_id": gg_id("bea@x.com")}, "104")):
+    def test_details_form_for_signed_in_pending_viewers(self):
+        for email in ("hal@x.com", "bea@x.com", "nobody@x.com"):      # Hold, blank, no CRM record
             hard_reset(lf)
-            body = page(cookies)
+            body = page({"gg_id": gg_id(email)})
             self.assertNotIn(TERM, body)
-            self.assertIn("<p>Offer terms are shown to accredited investors.</p>", body)
-            self.assertIn('<button type="submit">I confirm I am an accredited investor</button>', body)
-            self.assertIn('action="https://trades.graciagroup.com/?view=self-confirm"', body)
-            self.assertIn('Not sure? <a href="https://www.rainmakersecurities.com/investor-qualification-form-for-natural-persons">'
-                          'Complete the investor qualification form</a>', body)
-            self.assertIn('name="website" class="gate-hp"', body)
-            self.assertNotIn("Your access is being reviewed", body)
+            self.assertIn("<h2>One more step to see offer terms</h2>", body, email)
+            self.assertIn('action="https://trades.graciagroup.com/?view=access-details"', body)
+            self.assertIn('<input type="hidden" name="path" value="/deal/4242">', body)
+            for f in ('name="first_name" required', 'name="last_name" required', '<select name="country" required>',
+                      '<option value="Canada">Canada</option>', 'value="yes" required> I am an accredited investor',
+                      "value=\"unsure\"> I'm not sure", '<button type="submit">Submit</button>'):
+                self.assertIn(f, body, (email, f))
+            self.assertNotIn("I confirm I am an accredited investor", body)
             with mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
-                self.assertEqual(lf.dg_verify_token(form_token(body), "scf1"), pid)
+                self.assertEqual(lf.dg_verify_token(form_token(body), "adf1"), lf.dg_email_tag(email))
 
-    def test_no_button_for_blocked_hard_unmatched_or_no_secret(self):
-        for cookies, env in (({"gg_id": gg_id("ned@x.com")}, None),                 # Non-Accredited
-                             ({"gg_id": gg_id("rob@rainmakersecurities.com")}, None),  # hard block
-                             ({"gg_id": gg_id("cob@y.com")}, None),                 # broker
-                             ({"gg_id": gg_id("dup@y.com")}, None),                 # hard + cleared
-                             ({"gg_id": gg_id("nobody@x.com")}, None),              # pending, no record
+    def test_no_form_for_anon_cleared_blocked_hard_or_no_secret(self):
+        for cookies, env in (({}, None), ({"gg_id": gg_id("ann@x.com")}, None),
+                             ({"gg_id": gg_id("ned@x.com")}, None),
+                             ({"gg_id": gg_id("rob@rainmakersecurities.com")}, None),
+                             ({"gg_id": gg_id("cob@y.com")}, None),
+                             ({"gg_id": gg_id("sam@x.com")}, None),
                              ({"gg_id": gg_id("hal@x.com")}, {"VIEW_LINK_SECRET": ""})):
             hard_reset(lf)
             body = page(cookies, env=env)
+            self.assertNotIn("One more step to see offer terms", body, cookies)
+            self.assertNotIn("access-details", body, cookies)
+
+    def test_submitted_details_show_thank_you_and_terms_stay_blurred(self):
+        for ans, text in (("yes", "Thanks, Hal. We'll review your details and be in touch shortly."),
+                          ("unsure", "Thanks, Hal. Please complete the Investor Qualification Form so we can review your access.")):
+            hard_reset(lf)
+            S3.objects[(B, QUEUE)] = json.dumps({"items": {"hal@x.com": {
+                "email": "hal@x.com", "person_id": "102", "reason": "signup", "first_name": "Hal",
+                "last_name": "Hold", "country": "Canada", "employer": "", "accredited": ans,
+                "details_at": "2030-01-01T00:00:00+00:00", "from": "/deal/4242"}}, "declined": {}}).encode()
+            body = page({"gg_id": gg_id("hal@x.com")})
             self.assertNotIn(TERM, body)
-            self.assertIn("Your access is being reviewed", body, cookies)
-            self.assertNotIn("I confirm I am an accredited investor", body, cookies)
-            self.assertNotIn("self-confirm", body)
+            self.assertIn(text, body.replace("&#x27;", "'"), ans)
+            self.assertNotIn("One more step", body)
+            self.assertIn('target="_blank" rel="noopener"', body)
 
     def test_detail_and_token(self):
         hard_reset(lf)
@@ -716,7 +730,7 @@ class SelfConfirmBox(unittest.TestCase):
         for switch in (False, True):
             hard_reset(lf, switch=switch)
             body = page({"admin_key": ADMIN}, qp={"gate_preview": "confirm"})
-            self.assertIn("I confirm I am an accredited investor", body)
+            self.assertIn("One more step to see offer terms", body)
             self.assertIn('name="t" value=""', body)
             hard_reset(lf, switch=switch)
             body = page({"admin_key": ADMIN}, qp={"gate_preview": "confirmed"})
@@ -758,7 +772,8 @@ class SelfConfirmBox(unittest.TestCase):
         S3.objects[(B, QUEUE)] = b"not json"
         with self.assertLogs(level="INFO") as logs:
             body = page({"gg_id": gg_id("nobody@x.com")})
-        self.assertIn("Your access is being reviewed", body)
+        self.assertIn("One more step to see offer terms", body)
+        self.assertNotIn(TERM, body)
         joined = "\n".join(logs.output)
         self.assertIn("deal-gate: access queue write failed", joined)
         self.assertNotIn("nobody@x.com", joined)
