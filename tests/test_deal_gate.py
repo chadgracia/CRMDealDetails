@@ -318,9 +318,14 @@ class Withheld(unittest.TestCase):
     def test_gate_box_copy(self):
         body = self.body_for({})["body"]
         self.assertIn("Offer terms are shown to investors we work with", body)
-        self.assertIn("Already working with us? Enter your email and we'll send you a one-click link.", body)
-        self.assertIn("If that address is on file, a link is on its way.", body)
-        self.assertIn(">Request access</a>", body)
+        self.assertIn('<p class="gate-l1">Already a client? Enter your email for a one-click link.</p>', body)
+        self.assertIn('<button type="submit">Send link</button>', body)
+        self.assertIn("<div class=\"gate-new\"><p>New here? Create a login and we'll review your access.</p>", body)
+        self.assertIn('<div class="gate-done" hidden><p>If that address is on file, a link is on its way. '
+                      'Not a client yet?</p>', body)
+        self.assertEqual(body.count('<a class="gate-btn" href="https://us-east-1dsttcaqx7.auth.us-east-1.amazoncognito.com/signup?'), 2)
+        self.assertIn(".gate-btn{display:inline-block;padding:8px 16px;font-size:14px;font-weight:600;", body)
+        self.assertNotIn("Already working with us", body)
         self.assertIn("/signup?client_id=", body)
         self.assertIn('name="website"', body)
         for word in ("CRM", "Investor Level", "tracking", "Pipeline"):
@@ -722,11 +727,41 @@ class SelfConfirmBox(unittest.TestCase):
                 self.assertNotIn("I confirm I am an accredited investor",
                                  page({"admin_key": ADMIN}, qp={"gate_preview": prev}))
 
-    def test_deal_page_never_writes_queue(self):
+    def test_deal_page_queues_signed_in_pending_viewer(self):
         hard_reset(lf)
-        page({"gg_id": gg_id("nobody@x.com")})
-        page({"gg_id": gg_id("hal@x.com")})
+        page({"gg_id": gg_id("nobody@x.com")})            # no CRM record
+        page({"gg_id": gg_id("hal@x.com")})               # Hold record
+        q = json.loads(S3.objects[(B, QUEUE)])
+        self.assertEqual(set(q["items"]), {"nobody@x.com", "hal@x.com"})
+        self.assertEqual((q["items"]["nobody@x.com"]["reason"], q["items"]["nobody@x.com"]["person_id"]),
+                         ("signup", None))
+        self.assertEqual(q["items"]["hal@x.com"]["person_id"], "102")
+        n = S3.puts.count(QUEUE)
+        page({"gg_id": gg_id("hal@x.com")})               # once per email
+        self.assertEqual(S3.puts.count(QUEUE), n)
+
+    def test_deal_page_does_not_queue_anon_cleared_blank_declined_or_switch_off(self):
+        hard_reset(lf)
+        S3.objects[(B, QUEUE)] = json.dumps({"items": {}, "declined": {"hal@x.com": "2030-01-01T00:00:00+00:00"}}).encode()
+        for cookies in ({}, {"gg_id": gg_id("ann@x.com")}, {"gg_id": gg_id("bea@x.com")},
+                        {"gg_id": gg_id("ned@x.com")}, {"gg_id": gg_id("rob@rainmakersecurities.com")},
+                        {"gg_id": gg_id("hal@x.com")}):
+            page(cookies)
         self.assertNotIn(QUEUE, S3.puts)
+        hard_reset(lf, switch=False)
+        page({"gg_id": gg_id("nobody@x.com")})
+        self.assertNotIn(QUEUE, S3.puts)
+
+    def test_deal_page_queue_failure_still_renders(self):
+        hard_reset(lf)
+        S3.deny_put = {QUEUE} if hasattr(S3, "deny_put") else set()
+        S3.objects[(B, QUEUE)] = b"not json"
+        with self.assertLogs(level="INFO") as logs:
+            body = page({"gg_id": gg_id("nobody@x.com")})
+        self.assertIn("Your access is being reviewed", body)
+        joined = "\n".join(logs.output)
+        self.assertIn("deal-gate: access queue write failed", joined)
+        self.assertNotIn("nobody@x.com", joined)
 
     def test_approved_clears_unless_hard(self):
         from datetime import datetime, timezone
