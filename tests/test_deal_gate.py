@@ -335,8 +335,9 @@ class Withheld(unittest.TestCase):
         self.assertIn("Thanks for registering. Your access is being reviewed and we'll be in touch.", b)
         self.assertNotIn("Send link", b)
         b = self.body_for({"gg_id": gg_id("hal@x.com")})["body"]      # Hold: details form instead
-        self.assertIn("<h2>One more step to see deal terms</h2>", b)
-        self.assertIn("Tell us who you are and we'll review your access.", b)
+        self.assertIn("<h2>Request access to deal terms</h2>", b)
+        self.assertIn("Securities rules limit pricing to investors we've reviewed. Tell us who you are and "
+                      "we'll reply within one business day.", b.replace("&#x27;", "'"))
         self.assertNotIn("Send link", b)
         for word in ("CRM", "Investor Level", "tracking", "Pipeline"):
             self.assertNotIn(word, b.split("gate-box", 1)[1].split("</div>", 1)[0])
@@ -654,7 +655,7 @@ class SelfConfirmBox(unittest.TestCase):
             hard_reset(lf)
             body = page({"gg_id": gg_id(email)})
             self.assertNotIn(TERM, body)
-            self.assertIn("<h2>One more step to see deal terms</h2>", body, email)
+            self.assertIn("<h2>Request access to deal terms</h2>", body, email)
             self.assertIn('action="https://trades.graciagroup.com/?view=access-details"', body)
             self.assertIn('<input type="hidden" name="path" value="/deal/4242">', body)
             for f in ('name="first_name" required', 'name="last_name" required', '<select name="country" required>',
@@ -665,6 +666,17 @@ class SelfConfirmBox(unittest.TestCase):
             with mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
                 self.assertEqual(lf.dg_verify_token(form_token(body), "adf1"), lf.dg_email_tag(email))
 
+    def test_form_wording_and_linkedin_field_on_deal_page(self):
+        hard_reset(lf)
+        body = page({"gg_id": gg_id("hal@x.com")}).replace("&#x27;", "'")
+        self.assertIn("<h2>Request access to deal terms</h2>", body)
+        self.assertIn("Securities rules limit pricing to investors we've reviewed. Tell us who you are and "
+                      "we'll reply within one business day.", body)
+        self.assertIn('LinkedIn profile (optional)<input type="text" name="linkedin" maxlength="200" '
+                      'placeholder="linkedin.com/in/yourname"', body)
+        self.assertEqual(lf.dg_normalize_linkedin("linkedin.com/in/hal"), "https://www.linkedin.com/in/hal")
+        self.assertEqual(lf.dg_normalize_linkedin("evil.example"), "")
+
     def test_no_form_for_anon_cleared_blocked_hard_or_no_secret(self):
         for cookies, env in (({}, None), ({"gg_id": gg_id("ann@x.com")}, None),
                              ({"gg_id": gg_id("ned@x.com")}, None),
@@ -674,11 +686,11 @@ class SelfConfirmBox(unittest.TestCase):
                              ({"gg_id": gg_id("hal@x.com")}, {"VIEW_LINK_SECRET": ""})):
             hard_reset(lf)
             body = page(cookies, env=env)
-            self.assertNotIn("One more step to see deal terms", body, cookies)
+            self.assertNotIn("Request access to deal terms", body, cookies)
             self.assertNotIn("access-details", body, cookies)
 
     def test_submitted_details_show_thank_you_and_terms_stay_blurred(self):
-        for ans, text in (("yes", "Thanks, Hal. We'll review your details and be in touch shortly."),
+        for ans, text in (("yes", "Thanks, Hal. We'll review your details and email you within one business day."),
                           ("unsure", "Thanks, Hal. Please complete the Investor Qualification Form so we can review your access.")):
             hard_reset(lf)
             S3.objects[(B, QUEUE)] = json.dumps({"items": {"hal@x.com": {
@@ -688,7 +700,7 @@ class SelfConfirmBox(unittest.TestCase):
             body = page({"gg_id": gg_id("hal@x.com")})
             self.assertNotIn(TERM, body)
             self.assertIn(text, body.replace("&#x27;", "'"), ans)
-            self.assertNotIn("One more step", body)
+            self.assertNotIn("Request access to deal terms", body)
             self.assertIn('target="_blank" rel="noopener"', body)
 
     def test_detail_and_token(self):
@@ -730,7 +742,7 @@ class SelfConfirmBox(unittest.TestCase):
         for switch in (False, True):
             hard_reset(lf, switch=switch)
             body = page({"admin_key": ADMIN}, qp={"gate_preview": "confirm"})
-            self.assertIn("One more step to see deal terms", body)
+            self.assertIn("Request access to deal terms", body)
             self.assertIn('name="t" value=""', body)
             hard_reset(lf, switch=switch)
             body = page({"admin_key": ADMIN}, qp={"gate_preview": "confirmed"})
@@ -772,7 +784,7 @@ class SelfConfirmBox(unittest.TestCase):
         S3.objects[(B, QUEUE)] = b"not json"
         with self.assertLogs(level="INFO") as logs:
             body = page({"gg_id": gg_id("nobody@x.com")})
-        self.assertIn("One more step to see deal terms", body)
+        self.assertIn("Request access to deal terms", body)
         self.assertNotIn(TERM, body)
         joined = "\n".join(logs.output)
         self.assertIn("deal-gate: access queue write failed", joined)

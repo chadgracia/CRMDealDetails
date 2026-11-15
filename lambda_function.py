@@ -1926,6 +1926,8 @@ DG_AD_ROUTE = "/?view=access-details"
 DG_AD_COOKIE = "gg_ad"           # "already submitted" marker (answer only), bridges the queue cache
 DG_AD_COOKIE_TTL = 7 * 86400
 DG_AD_MAX = 80
+DG_AD_LINKEDIN_MAX = 200
+_DG_LINKEDIN_RE = re.compile(r"^(?:https?://)?(?:www\.)?linkedin\.com(/[A-Za-z0-9\-._~%/]*)?/?$", re.I)
 DG_AD_ANSWERS = ("yes", "unsure")
 DG_AD_PLACEHOLDER_NAMES = frozenset({"", ".", "..", "...", "-", "--", "_", "?", "x", "n/a", "na", "none",
                                      "null", "unknown", "(unknown)", "unverified", "(unverified)", "tbd",
@@ -2360,6 +2362,19 @@ def dg_clean_field(value, cap=DG_AD_MAX):
     return v[:cap].strip()
 
 
+def dg_normalize_linkedin(value):
+    """A linkedin.com address (with or without https:// and www.) as
+    https://www.linkedin.com/<path>, capped at DG_AD_LINKEDIN_MAX; anything else ''.
+    Query strings and fragments are dropped."""
+    v = dg_clean_field(value, 400)
+    v = re.split(r"[?#]", v, 1)[0].strip()
+    m = _DG_LINKEDIN_RE.match(v)
+    if not m:
+        return ""
+    path = (m.group(1) or "/").lstrip("/")
+    return ("https://www.linkedin.com/" + path)[:DG_AD_LINKEDIN_MAX]
+
+
 def dg_name_is_placeholder(name):
     """True for a blank or placeholder name (".", "Unknown", "(unverified)", ...)."""
     return dg_clean_field(name if isinstance(name, str) else "").lower() in DG_AD_PLACEHOLDER_NAMES
@@ -2489,6 +2504,7 @@ DG_CSS = """<style>
 .gate-details{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;margin:10px 0;max-width:520px}
 .gate-details label{display:flex;flex-direction:column;font-size:13px;gap:3px}
 .gate-details input[type=text],.gate-details select{padding:7px 9px;font-size:14px;border:1px solid #ccc;border-radius:5px}
+.gate-details .gate-wide{grid-column:1/-1}
 .gate-details fieldset{grid-column:1/-1;border:none;margin:0;padding:0;font-size:14px}
 .gate-details fieldset label{flex-direction:row;align-items:center;gap:6px;font-size:14px}
 .gate-details button{grid-column:1/-1;justify-self:start;padding:8px 16px;font-size:14px;font-weight:600;
@@ -2529,11 +2545,12 @@ def dg_gate_box(state, dest_url, confirm_token=None):
         iqf = esc(DG_IQF_URL, quote=True)
         if answer == "yes":
             return (DG_CSS + '<div class="gate-box">'
-                    f"<p>{hi} We'll review your details and be in touch shortly.</p>"
+                    f"<p>{hi} We'll review your details and email you within one business day.</p>"
                     f'<p><a href="{iqf}" target="_blank" rel="noopener">Completing the Investor '
                     'Qualification Form speeds this up</a></p></div>')
         return (DG_CSS + '<div class="gate-box">'
-                f"<p>{hi} Please complete the Investor Qualification Form so we can review your access.</p>"
+                f"<p>{hi} Please complete the Investor Qualification Form so we can review your access. "
+                "We'll email you once it's reviewed.</p>"
                 f'<p><a class="gate-btn" href="{iqf}" target="_blank" rel="noopener">Complete the '
                 'Investor Qualification Form</a></p></div>')
     if state == "pending" and isinstance(confirm_token, tuple) and confirm_token[:1] == ("details",):
@@ -2541,8 +2558,9 @@ def dg_gate_box(state, dest_url, confirm_token=None):
         rel = dg_clean_path(rel or "/", "/")
         opts = "".join(f'<option value="{esc(c, quote=True)}">{esc(c)}</option>' for c in DG_COUNTRIES)
         return (DG_CSS + '<div class="gate-box">'
-                '<h2>One more step to see deal terms</h2>'
-                "<p>Tell us who you are and we'll review your access.</p>"
+                '<h2>Request access to deal terms</h2>'
+                "<p>Securities rules limit pricing to investors we've reviewed. "
+                "Tell us who you are and we'll reply within one business day.</p>"
                 f'<form class="gate-details" method="post" action="{esc(DG_SITE + DG_AD_ROUTE, quote=True)}">'
                 f'<input type="hidden" name="t" value="{esc(confirm_token[1] or "", quote=True)}">'
                 f'<input type="hidden" name="path" value="{esc(rel, quote=True)}">'
@@ -2551,6 +2569,8 @@ def dg_gate_box(state, dest_url, confirm_token=None):
                 f'<label>Last name<input type="text" name="last_name" required maxlength="{DG_AD_MAX}" autocomplete="family-name"></label>'
                 f'<label>Country<select name="country" required><option value="">Select</option>{opts}</select></label>'
                 f'<label>Employer (optional)<input type="text" name="employer" maxlength="{DG_AD_MAX}" autocomplete="organization"></label>'
+                f'<label class="gate-wide">LinkedIn profile (optional)<input type="text" name="linkedin" '
+                f'maxlength="{DG_AD_LINKEDIN_MAX}" placeholder="linkedin.com/in/yourname" autocomplete="url"></label>'
                 '<fieldset><label><input type="radio" name="accredited" value="yes" required> I am an accredited investor</label>'
                 "<label><input type=\"radio\" name=\"accredited\" value=\"unsure\"> I'm not sure</label></fieldset>"
                 '<button type="submit">Submit</button>'
