@@ -1874,7 +1874,7 @@ def _people_slim_status_index():
 
 
 # --- Deal gate (shared verbatim with chadgracia/trades and chadgracia/CRMDealDetails) ---
-# Offer terms are shown only to recognised investors. The switch lives in
+# Deal terms are shown only to recognised investors. The switch lives in
 # s3://full-pipeline-cache/deal-gate.json; with it off nothing changes for
 # non-admins. gg_view (personal view-only links) only ever unlocks terms: it is
 # never treated as signed in, never minted into gg_id and never yields an SSO token.
@@ -2211,7 +2211,7 @@ def dg_level_label(level_ids):
     return " / ".join(DG_IL_LABELS.get(i, f"Other ({i})") for i in ids)
 
 
-# Hard block: Rainmaker staff and brokers never see offer terms, whatever their
+# Hard block: Rainmaker staff and brokers never see deal terms, whatever their
 # Investor Level. It beats cleared, personal links and self-confirmation.
 DG_HARD_DOMAINS = ("rainmakersecurities.com", "rainmakerapac.com")   # and subdomains
 # Same list as chadgracia/daily-brief MAILER_BLOCK_EMAILS.
@@ -2541,7 +2541,7 @@ def dg_gate_box(state, dest_url, confirm_token=None):
         rel = dg_clean_path(rel or "/", "/")
         opts = "".join(f'<option value="{esc(c, quote=True)}">{esc(c)}</option>' for c in DG_COUNTRIES)
         return (DG_CSS + '<div class="gate-box">'
-                '<h2>One more step to see offer terms</h2>'
+                '<h2>One more step to see deal terms</h2>'
                 "<p>Tell us who you are and we'll review your access.</p>"
                 f'<form class="gate-details" method="post" action="{esc(DG_SITE + DG_AD_ROUTE, quote=True)}">'
                 f'<input type="hidden" name="t" value="{esc(confirm_token[1] or "", quote=True)}">'
@@ -2562,7 +2562,7 @@ def dg_gate_box(state, dest_url, confirm_token=None):
         rel = dg_clean_path(rel or "/", "/")
         tok = "" if confirm_token == "preview" else confirm_token
         return (DG_CSS + '<div class="gate-box">'
-                '<p>Offer terms are shown to accredited investors.</p>'
+                '<p>Deal terms are shown to accredited investors.</p>'
                 f'<form class="gate-form" method="post" action="{esc(DG_SITE + DG_SC_ROUTE, quote=True)}">'
                 f'<input type="hidden" name="t" value="{esc(tok, quote=True)}">'
                 f'<input type="hidden" name="path" value="{esc(rel, quote=True)}">'
@@ -2577,7 +2577,7 @@ def dg_gate_box(state, dest_url, confirm_token=None):
     signup = html_mod.escape(dg_signup_url(dest_url), quote=True)
     return (DG_CSS + DG_JS
             + '<div class="gate-box">'
-            '<h2>Offer terms are shown to investors we work with</h2>'
+            '<h2>Deal terms are shown to investors we work with</h2>'
             '<p class="gate-l1">Already a client? Enter your email for a one-click link.</p>'
             '<form class="gate-form" method="post" onsubmit="return ggGateSubmit(this)">'
             '<input type="email" name="email" required placeholder="Email" aria-label="Email">'
