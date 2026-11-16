@@ -1782,11 +1782,12 @@ _people_slim_cache = {"etag": None, "checked_at": 0.0, "by_id": None, "by_email"
 
 
 def _person_emails(p):
-    """Lowercased emails on a person record: every top-level email* field
+    """Lowercased, trimmed emails on a person record: all three Pipeline slots
+    (email, email2, home_email) plus every other top-level email* field
     (string, list of strings, or list of {"email": ...} dicts)."""
     out = set()
     for k, v in p.items():
-        if not isinstance(k, str) or not k.lower().startswith("email"):
+        if not isinstance(k, str) or not (k.lower().startswith("email") or k.lower() == "home_email"):
             continue
         for item in (v if isinstance(v, list) else [v]):
             if isinstance(item, dict):

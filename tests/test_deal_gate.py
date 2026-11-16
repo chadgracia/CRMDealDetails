@@ -677,6 +677,21 @@ class SelfConfirmBox(unittest.TestCase):
         self.assertEqual(lf.dg_normalize_linkedin("linkedin.com/in/hal"), "https://www.linkedin.com/in/hal")
         self.assertEqual(lf.dg_normalize_linkedin("evil.example"), "")
 
+    def test_email2_and_home_email_slots(self):
+        extra = [{"id": 401, "first_name": "Sec", "email": "work@s.com", "email2": " Second@S.com ",
+                  "custom_fields": {"custom_label_3923758": 7162165}},
+                 {"id": 402, "first_name": "Hom", "email": "w2@s.com", "home_email": "Home@Mail.com",
+                  "custom_fields": {"custom_label_3923758": 6950563}},
+                 {"id": 403, "first_name": "Hb", "email": "hb@s.com", "email2": "hb@rainmakersecurities.com",
+                  "custom_fields": {"custom_label_3923758": 6950563}}]
+        for em, want in (("second@s.com", (False, "cleared")), ("home@mail.com", (False, "cleared")),
+                         ("hb@s.com", (True, "blocked"))):
+            hard_reset(lf)
+            S3.objects[(B, SLIM)] = json.dumps({"people": PEOPLE + HARD_PEOPLE + extra}).encode()
+            self.assertEqual(hard_state({"gg_id": gg_id(em)}), want, em)
+        self.assertEqual(lf._person_emails({"email": "A@x.com", "email2": " b@X.com", "home_email": "C@y.com"}),
+                         {"a@x.com", "b@x.com", "c@y.com"})
+
     def test_no_form_for_anon_cleared_blocked_hard_or_no_secret(self):
         for cookies, env in (({}, None), ({"gg_id": gg_id("ann@x.com")}, None),
                              ({"gg_id": gg_id("ned@x.com")}, None),
