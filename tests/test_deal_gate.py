@@ -336,8 +336,8 @@ class Withheld(unittest.TestCase):
         self.assertNotIn("Send link", b)
         b = self.body_for({"gg_id": gg_id("hal@x.com")})["body"]      # Hold: details form instead
         self.assertIn("<h2>Request access to deal terms</h2>", b)
-        self.assertIn("Securities rules limit pricing to investors we've reviewed. Tell us who you are and "
-                      "we'll reply within one business day.", b.replace("&#x27;", "'"))
+        self.assertIn("Securities rules limit deal pricing to accredited investors. Tell us who you are and "
+                      "we'll confirm your access within one business day.", b.replace("&#x27;", "'"))
         self.assertNotIn("Send link", b)
         for word in ("CRM", "Investor Level", "tracking", "Pipeline"):
             self.assertNotIn(word, b.split("gate-box", 1)[1].split("</div>", 1)[0])
@@ -671,8 +671,8 @@ class SelfConfirmBox(unittest.TestCase):
         hard_reset(lf)
         body = page({"gg_id": gg_id("hal@x.com")}).replace("&#x27;", "'")
         self.assertIn("<h2>Request access to deal terms</h2>", body)
-        self.assertIn("Securities rules limit pricing to investors we've reviewed. Tell us who you are and "
-                      "we'll reply within one business day.", body)
+        self.assertIn("Securities rules limit deal pricing to accredited investors. Tell us who you are and "
+                      "we'll confirm your access within one business day.", body)
         self.assertIn('LinkedIn profile (optional)<input type="text" name="linkedin" maxlength="200" '
                       'placeholder="linkedin.com/in/yourname"', body)
         self.assertEqual(lf.dg_normalize_linkedin("linkedin.com/in/hal"), "https://www.linkedin.com/in/hal")
