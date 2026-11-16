@@ -622,7 +622,8 @@ class HardBlock(unittest.TestCase):
         hard_reset(lf)
         body = run(lf, cookies={cookie[0]: cookie[1]})["body"]
         self.assertNotIn(TERM, body)
-        self.assertIn("Your access is being reviewed", body)
+        self.assertIn("<h2>Brokers and advisers</h2>", body)
+        self.assertNotIn("Your access is being reviewed", body)
         for s in ("Rainmaker/broker", "Hard-blocked", "I confirm I am an accredited investor", 'name="t"'):
             self.assertNotIn(s, body)
 
@@ -691,6 +692,36 @@ class SelfConfirmBox(unittest.TestCase):
             self.assertEqual(hard_state({"gg_id": gg_id(em)}), want, em)
         self.assertEqual(lf._person_emails({"email": "A@x.com", "email2": " b@X.com", "home_email": "C@y.com"}),
                          {"a@x.com", "b@x.com", "c@y.com"})
+
+    def test_broker_override_and_partner_desk_box_on_deal_page(self):
+        extra = [{"id": 601, "first_name": "Bro", "email": "bro@k.com",
+                  "custom_fields": {"custom_label_3759163": 6577160, "custom_label_4011837": 7218528}},
+                 {"id": 602, "first_name": "Bru", "email": "bru@k.com",
+                  "custom_fields": {"custom_label_3759163": 6888332, "custom_label_4011837": 7218527}},
+                 {"id": 603, "first_name": "Ram", "email": "ram@rainmakersecurities.com",
+                  "custom_fields": {"custom_label_4011837": 7218528}}]
+
+        def load():
+            hard_reset(lf)
+            S3.objects[(B, SLIM)] = json.dumps({"people": PEOPLE + HARD_PEOPLE + extra}).encode()
+        for em in ("bro@k.com", "ram@rainmakersecurities.com"):
+            load()
+            self.assertEqual(hard_state({"gg_id": gg_id(em)}), (False, "cleared"), em)
+            load()
+            self.assertIn(TERM, page({"gg_id": gg_id(em)}))
+        load()
+        body = page({"gg_id": gg_id("bru@k.com")})
+        self.assertNotIn(TERM, body)
+        self.assertIn("<h2>Brokers and advisers</h2>", body)
+        self.assertIn("Brokers, advisers and finders see deal terms through our Partner Desk.", body)
+        self.assertIn('<a class="gate-btn" href="https://trades.graciagroup.com/?view=partner-desk">Open the Partner Desk</a>', body)
+        load()
+        body = page({"gg_id": gg_id("ned@x.com")})                       # Non-Accredited: neutral
+        self.assertIn("Your access is being reviewed", body)
+        self.assertNotIn("Brokers and advisers", body)
+        load()
+        self.assertIn('value="intermediary"> I represent clients (broker, adviser or finder)',
+                      page({"gg_id": gg_id("hal@x.com")}))
 
     def test_no_form_for_anon_cleared_blocked_hard_or_no_secret(self):
         for cookies, env in (({}, None), ({"gg_id": gg_id("ann@x.com")}, None),
